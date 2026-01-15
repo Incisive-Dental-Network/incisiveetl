@@ -23,12 +23,12 @@ const logger = winston.createLogger({
     new winston.transports.File({
       filename: path.join(logDir, 'combined.log')
     }),
-    new winston.transports.Console({
-      format: winston.format.combine(
-        winston.format.colorize(),
-        winston.format.simple()
-      )
-    })
+    // new winston.transports.Console({
+    //   format: winston.format.combine(
+    //     winston.format.colorize(),
+    //     winston.format.simple()
+    //   )
+    // })
   ]
 });
 

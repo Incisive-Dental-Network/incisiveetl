@@ -24,38 +24,28 @@ class DBService {
      * Insert single row into staging table
      */
     async insertStageRow(client, row, fileName) {
-        // Validate required fields
-        const caseid = row.caseid ? parseInt(row.caseid) : null;
+        const caseid = row.caseid ? parseInt(row.caseid, 10) : null;
         const productid = row.productid || null;
-
-        if (!caseid || !productid) {
-            return {
-                success: false,
-                reason: !caseid ? 'Missing caseid' : 'Missing productid',
-                caseid: row.caseid,
-                productid: row.productid
-            };
-        }
 
         const rowHash = generateRowHash(row);
         const sourceFileKey = config.aws.sourcePath + fileName;
 
         const sql = `
-      INSERT INTO orders_stage (
-        submissiondate, shippingdate, casedate, caseid, productid,
-        productdescription, quantity, productprice, patientname,
-        customerid, customername, address, phonenumber, casestatus,
-        holdreason, estimatecompletedate, requestedreturndate,
-        trackingnumber, estimatedshipdate, holddate, deliverystatus,
-        notes, onhold, shade, mold, doctorpreferences,
-        productpreferences, comments, casetotal,
-        source_file_key, row_hash
-      ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-        $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31
-      )
-    `;
+            INSERT INTO orders_stage (
+                submissiondate, shippingdate, casedate, caseid, productid,
+                productdescription, quantity, productprice, patientname,
+                customerid, customername, address, phonenumber, casestatus,
+                holdreason, estimatecompletedate, requestedreturndate,
+                trackingnumber, estimatedshipdate, holddate, deliverystatus,
+                notes, onhold, shade, mold, doctorpreferences,
+                productpreferences, comments, casetotal,
+                source_file_key, row_hash
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+                $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+                $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31
+            )
+        `;
 
         const values = [
             row.submissiondate || null,
@@ -64,7 +54,7 @@ class DBService {
             caseid,
             productid,
             row.productdescription || null,
-            row.quantity ? parseInt(row.quantity) : null,
+            row.quantity ? parseInt(row.quantity, 10) : null,
             row.productprice || null,
             row.patientname || null,
             row.customerid || null,
@@ -91,8 +81,19 @@ class DBService {
             rowHash
         ];
 
-        await client.query(sql, values);
-        return { success: true, caseid, productid };
+        try {
+            await client.query(sql, values);
+            return { success: true };
+        } catch (error) {
+            return {
+                success: false,
+                errorRow: {
+                    row,
+                    error_code: error.code,
+                    error_message: error.message
+                }
+            };
+        }
     }
 
     /**
@@ -117,9 +118,9 @@ class DBService {
     }
 
     /**
-     * 
+     * Insert product into catalog
      */
-    async insertProductCatlog(client, row) {
+    async insertProductCatalog(client, row) {
         const sql = `
             INSERT INTO incisive_product_catalog (
             incisive_id, incisive_name, category, sub_category
@@ -153,7 +154,7 @@ class DBService {
     }
 
     /**
-     * 
+     * Insert dental practice record
      */
     async insertDentalPractices(client, row) {
         const sql = `
@@ -213,6 +214,131 @@ class DBService {
                     error_message: error.message
                 }
             }
+        }
+    }
+
+    /**
+     * Insert lab product mapping record
+     */
+    async insertLabProductMapping(client, row) {
+        const sql = `
+            INSERT INTO lab_product_mapping (
+                lab_id,
+                lab_product_id,
+                incisive_product_id
+            ) VALUES (
+                $1, $2, $3
+            )
+            ON CONFLICT (lab_id, lab_product_id) DO NOTHING
+        `;
+
+        const values = [
+            row.lab_id,
+            row.lab_product_id,
+            row.incisive_product_id
+        ];
+
+        try {
+            await client.query(sql, values);
+            return { success: true };
+        } catch (error) {
+            return {
+                success: false,
+                errorRow: {
+                    row,
+                    error_code: error.code,
+                    error_message: error.message
+                }
+            };
+        }
+    }
+
+    /**
+     * Insert lab practice mapping record
+     */
+    async insertLabPracticeMapping(client, row) {
+        const sql = `
+            INSERT INTO lab_practice_mapping (
+                lab_id,
+                practice_id,
+                lab_practice_id
+            ) VALUES (
+                $1, $2, $3
+            )
+            ON CONFLICT (lab_id, practice_id) DO NOTHING
+        `;
+
+        const values = [
+            row.lab_id,
+            row.practice_id,
+            row.lab_practice_id
+        ];
+
+        try {
+            await client.query(sql, values);
+            return { success: true };
+        } catch (error) {
+            return {
+                success: false,
+                errorRow: {
+                    row,
+                    error_code: error.code,
+                    error_message: error.message
+                }
+            };
+        }
+    }
+
+    /**
+     * Insert dental group record
+     */
+    async insertDentalGroup(client, row) {
+        const sql = `
+            INSERT INTO dental_groups (
+                dental_group_id,
+                name,
+                address,
+                address_2,
+                city,
+                state,
+                zip,
+                account_type,
+                centralized_billing,
+                sales_channel,
+                sales_rep
+            ) VALUES (
+                $1, $2, $3, $4, $5,
+                $6, $7, $8, $9, $10, $11
+            )
+            ON CONFLICT (dental_group_id) DO NOTHING
+        `;
+
+        const values = [
+            row.dental_group_id,
+            row.name,
+            row.address,
+            row.address_2,
+            row.city,
+            row.state,
+            row.zip,
+            row.account_type,
+            row.centralized_billing,
+            row.sales_channel,
+            row.sales_rep
+        ];
+
+        try {
+            await client.query(sql, values);
+            return { success: true };
+        } catch (error) {
+            return {
+                success: false,
+                errorRow: {
+                    row,
+                    error_code: error.code,
+                    error_message: error.message
+                }
+            };
         }
     }
 

@@ -32,7 +32,7 @@ function mapCSVToSchema(row) {
         caseid: row.caseid || null,
         productid: row.productid || null,
         productdescription: row.productdescription || null,
-        quantity: row.quantity ? parseInt(row.quantity) : null,
+        quantity: row.quantity ? parseInt(row.quantity, 10) : null,
         productprice: row.productprice || null,
         patientname: row.patientname || null,
         customerid: row.customerid || null,
@@ -64,9 +64,10 @@ function mapCSVToSchema(row) {
  * @param {Object} row - Normalized CSV row
  * @returns {Object} Mapped row for database insertion
  */
-function mapCSVToLapProductSchema(row) {
+function mapCSVToLabProductSchema(row) {
+    const incisiveId = row.incisiveid ? Number(row.incisiveid) : null;
     return {
-        incisive_id: Number(row.incisiveid) || null,
+        incisive_id: Number.isNaN(incisiveId) ? null : incisiveId,
         incisive_name: row.incisivename || null,
         category: row.category || null,
         sub_category: row.subcategory || null
@@ -78,10 +79,12 @@ function mapCSVToLapProductSchema(row) {
  * @param {Object} row - Normalized CSV row
  * @returns {Object} Mapped row for database insertion
  */
-function mapCSVToLapPracticeSchema(row) {
+function mapCSVToLabPracticeSchema(row) {
+    const practiceId = row.practiceid ? Number(row.practiceid) : null;
+    const dentalGroupId = row.dentalgroupid ? Number(row.dentalgroupid) : null;
     return {
-        practice_id: Number(row.practiceid) || null,
-        dental_group_id: Number(row.dentalgroupid) || null,
+        practice_id: Number.isNaN(practiceId) ? null : practiceId,
+        dental_group_id: Number.isNaN(dentalGroupId) ? null : dentalGroupId,
         dental_group_name: row.dentalgroupname || null,
         address: row.address || null,
         address_2: row.address2 || null,
@@ -95,7 +98,63 @@ function mapCSVToLapPracticeSchema(row) {
         preferred_contact_method: row.preferredcontactmethod || null,
         fee_schedule: row.feeschedule || null,
         status: row.status || null
-    }
+    };
+}
+
+/**
+ * Map normalized CSV row to lab_product_mapping schema
+ * @param {Object} row - Normalized CSV row
+ * @returns {Object} Mapped row for database insertion
+ */
+function mapCSVToLabProductMappingSchema(row) {
+    const labId = row.labid ? Number(row.labid) : null;
+    const incisiveProductId = row.incisiveproductid ? Number(row.incisiveproductid) : null;
+    return {
+        lab_id: Number.isNaN(labId) ? null : labId,
+        lab_product_id: row.labproductid || null,
+        incisive_product_id: Number.isNaN(incisiveProductId) ? null : incisiveProductId
+    };
+}
+
+/**
+ * Map normalized CSV row to lab_practice_mapping schema
+ * @param {Object} row - Normalized CSV row
+ * @returns {Object} Mapped row for database insertion
+ */
+function mapCSVToLabPracticeMappingSchema(row) {
+    const labId = row.labid ? Number(row.labid) : null;
+    const practiceId = row.practiceid ? Number(row.practiceid) : null;
+    return {
+        lab_id: Number.isNaN(labId) ? null : labId,
+        practice_id: Number.isNaN(practiceId) ? null : practiceId,
+        lab_practice_id: row.labpracticeid || null
+    };
+}
+
+/**
+ * Map normalized CSV row to dental_groups schema
+ * @param {Object} row - Normalized CSV row
+ * @returns {Object} Mapped row for database insertion
+ */
+function mapCSVToDentalGroupsSchema(row) {
+    const dentalGroupId = row.dentalgroupid ? Number(row.dentalgroupid) : null;
+    // Handle boolean for centralized_billing
+    const centralizedBilling = row.centralizedbilling !== undefined && row.centralizedbilling !== null
+        ? (row.centralizedbilling === 'true' || row.centralizedbilling === 'TRUE' || row.centralizedbilling === '1' || row.centralizedbilling === true)
+        : null;
+    return {
+        dental_group_id: Number.isNaN(dentalGroupId) ? null : dentalGroupId,
+        name: row.name || null,
+        address: row.address || null,
+        address_2: row.address2 || null,
+        city: row.city || null,
+        state: row.state || null,
+        zip: row.zip || null,
+        account_type: row.accounttype || null,
+        centralized_billing: centralizedBilling,
+        sales_channel: row.saleschannel || null,
+        sales_rep: row.salesrep || null
+    };
 }
 
 /**
@@ -129,8 +188,11 @@ function objectToCSV(data) {
 module.exports = {
     normalizeCSVRow,
     mapCSVToSchema,
-    mapCSVToLapProductSchema,
-    mapCSVToLapPracticeSchema,
+    mapCSVToLabProductSchema,
+    mapCSVToLabPracticeSchema,
+    mapCSVToLabProductMappingSchema,
+    mapCSVToLabPracticeMappingSchema,
+    mapCSVToDentalGroupsSchema,
     logCSVHeaders,
     objectToCSV
 };

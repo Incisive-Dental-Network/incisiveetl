@@ -24,20 +24,59 @@ class S3Service {
         this.client = new S3Client(s3Config);
         this.bucket = config.aws.bucket;
 
-        // orders
-        this.sourcePath = config.aws.sourcePath;
-        this.processedPath = config.aws.processedPath;
-        this.logsPath = config.aws.logsPath
+        // Pipeline configurations
+        this.pipelines = {
+            orders: {
+                sourcePath: config.aws.sourcePath,
+                processedPath: config.aws.processedPath,
+                logsPath: config.aws.logsPath
+            },
+            labProduct: {
+                sourcePath: config.aws.lab_product_sourcepath,
+                processedPath: config.aws.lab_product_processedPath,
+                logsPath: config.aws.lab_product_logsPath
+            },
+            labPractice: {
+                sourcePath: config.aws.lab_practice_sourcepath,
+                processedPath: config.aws.lab_practice_processedPath,
+                logsPath: config.aws.lab_practice_logsPath
+            },
+            labProductMapping: {
+                sourcePath: config.aws.lab_product_mapping_sourcepath,
+                processedPath: config.aws.lab_product_mapping_processedPath,
+                logsPath: config.aws.lab_product_mapping_logsPath
+            },
+            labPracticeMapping: {
+                sourcePath: config.aws.lab_practice_mapping_sourcepath,
+                processedPath: config.aws.lab_practice_mapping_processedPath,
+                logsPath: config.aws.lab_practice_mapping_logsPath
+            },
+            dentalGroups: {
+                sourcePath: config.aws.dental_groups_sourcepath,
+                processedPath: config.aws.dental_groups_processedPath,
+                logsPath: config.aws.dental_groups_logsPath
+            }
+        };
 
-        //product
-        this.lab_product_sourcepath = config.aws.lab_product_sourcepath;
-        this.lab_product_processedPath = config.aws.lab_product_processedPath;
-        this.lab_product_logsPath = config.aws.lab_product_logsPath
-
-        //practice
-        this.lab_practice_sourcepath = config.aws.lab_practice_sourcepath;
-        this.lab_practice_processedPath = config.aws.lab_practice_processedPath;
-        this.lab_practice_logsPath = config.aws.lab_practice_logsPath
+        // Keep backward compatibility
+        this.sourcePath = this.pipelines.orders.sourcePath;
+        this.processedPath = this.pipelines.orders.processedPath;
+        this.logsPath = this.pipelines.orders.logsPath;
+        this.lab_product_sourcepath = this.pipelines.labProduct.sourcePath;
+        this.lab_product_processedPath = this.pipelines.labProduct.processedPath;
+        this.lab_product_logsPath = this.pipelines.labProduct.logsPath;
+        this.lab_practice_sourcepath = this.pipelines.labPractice.sourcePath;
+        this.lab_practice_processedPath = this.pipelines.labPractice.processedPath;
+        this.lab_practice_logsPath = this.pipelines.labPractice.logsPath;
+        this.lab_product_mapping_sourcepath = this.pipelines.labProductMapping.sourcePath;
+        this.lab_product_mapping_processedPath = this.pipelines.labProductMapping.processedPath;
+        this.lab_product_mapping_logsPath = this.pipelines.labProductMapping.logsPath;
+        this.lab_practice_mapping_sourcepath = this.pipelines.labPracticeMapping.sourcePath;
+        this.lab_practice_mapping_processedPath = this.pipelines.labPracticeMapping.processedPath;
+        this.lab_practice_mapping_logsPath = this.pipelines.labPracticeMapping.logsPath;
+        this.dental_groups_sourcepath = this.pipelines.dentalGroups.sourcePath;
+        this.dental_groups_processedPath = this.pipelines.dentalGroups.processedPath;
+        this.dental_groups_logsPath = this.pipelines.dentalGroups.logsPath;
     }
 
     /**
@@ -79,278 +118,203 @@ class S3Service {
     }
 
     /**
-     * List all CSV files in source folder
+     * Generic: List all CSV files in a path (with pagination support)
      */
+    async _listFiles(sourcePath, processedPath) {
+        try {
+            const allFiles = [];
+            let continuationToken = undefined;
+
+            do {
+                const command = new ListObjectsV2Command({
+                    Bucket: this.bucket,
+                    Prefix: sourcePath,
+                    ContinuationToken: continuationToken
+                });
+
+                const response = await this.client.send(command);
+
+                if (response.Contents && response.Contents.length > 0) {
+                    const files = response.Contents
+                        .filter(obj => {
+                            return obj.Key !== sourcePath &&
+                                !obj.Key.startsWith(processedPath) &&
+                                obj.Key.endsWith('.csv');
+                        })
+                        .map(obj => obj.Key.replace(sourcePath, ''));
+
+                    allFiles.push(...files);
+                }
+
+                continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
+            } while (continuationToken);
+
+            return allFiles;
+        } catch (error) {
+            logger.error('Error listing files', { sourcePath, error: error.message });
+            throw error;
+        }
+    }
+
+    /**
+     * Generic: Move file to processed folder
+     */
+    async _moveToProcessed(fileName, sourcePath, processedPath) {
+        try {
+            const sourceKey = sourcePath + fileName;
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const destKey = processedPath + `${timestamp}_${fileName}`;
+
+            // Copy file
+            const copyCommand = new CopyObjectCommand({
+                Bucket: this.bucket,
+                CopySource: `${this.bucket}/${sourceKey}`,
+                Key: destKey
+            });
+            await this.client.send(copyCommand);
+            logger.info('File copied to processed folder', { sourceKey, destKey });
+
+            // Delete original
+            const deleteCommand = new DeleteObjectCommand({
+                Bucket: this.bucket,
+                Key: sourceKey
+            });
+            await this.client.send(deleteCommand);
+            logger.info('Original file deleted', { sourceKey });
+
+            return destKey;
+        } catch (error) {
+            logger.error('Error moving file', { fileName, error: error.message });
+            throw error;
+        }
+    }
+
+    /**
+     * Generic: Upload log file to S3
+     */
+    async _uploadLogFile(localLogPath, fileName, logsPath) {
+        try {
+            const fileContent = await fs.readFile(localLogPath);
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const s3Key = `${logsPath}${fileName}_${timestamp}`;
+
+            const command = new PutObjectCommand({
+                Bucket: this.bucket,
+                Key: s3Key,
+                Body: fileContent,
+                ContentType: 'text/plain'
+            });
+
+            await this.client.send(command);
+            logger.info('Log file uploaded to S3', { localPath: localLogPath, s3Key, bucket: this.bucket });
+
+            return s3Key;
+        } catch (error) {
+            logger.error('Error uploading log file to S3', { localPath: localLogPath, error: error.message });
+            throw error;
+        }
+    }
+
+    // ==================== Orders Pipeline ====================
+
     async listFiles() {
-        try {
-            const command = new ListObjectsV2Command({
-                Bucket: this.bucket,
-                Prefix: this.sourcePath
-            });
-
-            const response = await this.client.send(command);
-
-            if (!response.Contents || response.Contents.length === 0) {
-                return [];
-            }
-
-            return response.Contents
-                .filter(obj => {
-                    return obj.Key !== this.sourcePath &&
-                        !obj.Key.startsWith(this.processedPath) &&
-                        obj.Key.endsWith('.csv');
-                })
-                .map(obj => obj.Key.replace(this.sourcePath, ''));
-        } catch (error) {
-            logger.error('Error listing files', { error: error.message });
-            throw error;
-        }
+        const { sourcePath, processedPath } = this.pipelines.orders;
+        return this._listFiles(sourcePath, processedPath);
     }
 
-    /**
-     * List all CSV files in source Lab Product
-     */
-    async listLabProductFiles() {
-        try {
-            const command = new ListObjectsV2Command({
-                Bucket: this.bucket,
-                Prefix: this.lab_product_sourcepath
-            });
-
-            const response = await this.client.send(command);
-
-            if (!response.Contents || response.Contents.length === 0) {
-                return [];
-            }
-
-            return response.Contents
-                .filter(obj => {
-                    return obj.Key !== this.lab_product_sourcepath &&
-                        !obj.Key.startsWith(this.lab_product_processedPath) &&
-                        obj.Key.endsWith('.csv');
-                })
-                .map(obj => obj.Key.replace(this.lab_product_sourcepath, ''));
-        } catch (error) {
-            logger.error('Error listing files of lab product', { error: error.message });
-            throw error;
-        }
-    }
-
-    /**
-     * List all CSV files in source folder Lab Practice
-     */
-    async listLabPracticeFiles() {
-        try {
-            const command = new ListObjectsV2Command({
-                Bucket: this.bucket,
-                Prefix: this.lab_practice_sourcepath
-            });
-
-            const response = await this.client.send(command);
-
-            if (!response.Contents || response.Contents.length === 0) {
-                return [];
-            }
-
-            return response.Contents
-                .filter(obj => {
-                    return obj.Key !== this.lab_practice_sourcepath &&
-                        !obj.Key.startsWith(this.lab_practice_processedPath) &&
-                        obj.Key.endsWith('.csv');
-                })
-                .map(obj => obj.Key.replace(this.lab_practice_sourcepath, ''));
-        } catch (error) {
-            logger.error('Error listing files in lab practice', { error: error.message });
-            throw error;
-        }
-    }
-
-    /**
-     * Move processed file to processed folder
-     */
     async moveToProcessed(fileName) {
-        try {
-            const sourceKey = this.sourcePath + fileName;
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const destKey = this.processedPath + `${timestamp}_${fileName}`;
-
-            // Copy file
-            const copyCommand = new CopyObjectCommand({
-                Bucket: this.bucket,
-                CopySource: `${this.bucket}/${sourceKey}`,
-                Key: destKey
-            });
-            await this.client.send(copyCommand);
-            logger.info('File copied to processed folder', { sourceKey, destKey });
-
-            // Delete original
-            const deleteCommand = new DeleteObjectCommand({
-                Bucket: this.bucket,
-                Key: sourceKey
-            });
-            // await this.client.send(deleteCommand);********
-            logger.info('Original file deleted', { sourceKey });
-
-            return destKey;
-        } catch (error) {
-            logger.error('Error moving file', { fileName, error: error.message });
-            throw error;
-        }
-    }
-
-    /**
-     * Move processed file to processed folder
-     */
-    async LabProductMoveToProcessed(fileName) {
-        try {
-            const sourceKey = this.lab_product_sourcepath + fileName;
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const destKey = this.lab_product_processedPath + `${timestamp}_${fileName}`;
-
-            // Copy file
-            const copyCommand = new CopyObjectCommand({
-                Bucket: this.bucket,
-                CopySource: `${this.bucket}/${sourceKey}`,
-                Key: destKey
-            });
-            await this.client.send(copyCommand);
-            logger.info('File copied to processed folder', { sourceKey, destKey });
-
-            // Delete original
-            const deleteCommand = new DeleteObjectCommand({
-                Bucket: this.bucket,
-                Key: sourceKey
-            });
-            // await this.client.send(deleteCommand);********
-            logger.info('Original file deleted', { sourceKey });
-
-            return destKey;
-        } catch (error) {
-            logger.error('Error moving file', { fileName, error: error.message });
-            throw error;
-        }
-    }
-
-    /**
-     * Move processed file to processed folder
-     */
-    async LabPracticeMoveToProcessed(fileName) {
-        try {
-            const sourceKey = this.lab_practice_sourcepath + fileName;
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const destKey = this.lab_practice_processedPath + `${timestamp}_${fileName}`;
-
-            // Copy file
-            const copyCommand = new CopyObjectCommand({
-                Bucket: this.bucket,
-                CopySource: `${this.bucket}/${sourceKey}`,
-                Key: destKey
-            });
-            await this.client.send(copyCommand);
-            logger.info('File copied to processed folder', { sourceKey, destKey });
-
-            // Delete original
-            const deleteCommand = new DeleteObjectCommand({
-                Bucket: this.bucket,
-                Key: sourceKey
-            });
-            // await this.client.send(deleteCommand);********
-            logger.info('Original file deleted', { sourceKey });
-
-            return destKey;
-        } catch (error) {
-            logger.error('Error moving file', { fileName, error: error.message });
-            throw error;
-        }
+        const { sourcePath, processedPath } = this.pipelines.orders;
+        return this._moveToProcessed(fileName, sourcePath, processedPath);
     }
 
     async uploadLogFile(localLogPath, fileName) {
-        try {
-            const fileContent = await fs.readFile(localLogPath);
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const s3Key = `${this.logsPath}${fileName}_${timestamp}`;
-
-            const command = new PutObjectCommand({
-                Bucket: this.bucket,
-                Key: s3Key,
-                Body: fileContent,
-                ContentType: 'text/plain'
-            });
-
-            await this.client.send(command);
-            logger.info('Log file uploaded to S3', {
-                localPath: localLogPath, 
-                s3Key,
-                bucket: this.bucket
-            });
-
-            return s3Key;
-        } catch (error) {
-            logger.error('Error uploading log file to S3', {
-                localPath: localLogPath,
-                error: error.message
-            });
-            throw error;
-        }
+        const { logsPath } = this.pipelines.orders;
+        return this._uploadLogFile(localLogPath, fileName, logsPath);
     }
 
-    async LabProductUploadLogFile(localLogPath, fileName) {
-        try {
-            const fileContent = await fs.readFile(localLogPath);
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const s3Key = `${this.lab_product_logsPath}${fileName}_${timestamp}`;
+    // ==================== Lab Product Pipeline ====================
 
-            const command = new PutObjectCommand({
-                Bucket: this.bucket,
-                Key: s3Key,
-                Body: fileContent,
-                ContentType: 'text/plain'
-            });
-
-            await this.client.send(command);
-            logger.info('Log file uploaded to S3', {
-                localPath: localLogPath,
-                s3Key,
-                bucket: this.bucket
-            });
-
-            return s3Key;
-        } catch (error) {
-            logger.error('Error uploading log file to S3', {
-                localPath: localLogPath,
-                error: error.message
-            });
-            throw error;
-        }
+    async listLabProductFiles() {
+        const { sourcePath, processedPath } = this.pipelines.labProduct;
+        return this._listFiles(sourcePath, processedPath);
     }
 
-    async LabPracticeUploadLogFile(localLogPath, fileName) {
-        try {
-            const fileContent = await fs.readFile(localLogPath);
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-            const s3Key = `${this.lab_practice_logsPath}${fileName}_${timestamp}`;
-            const command = new PutObjectCommand({
-                Bucket: this.bucket,
-                Key: s3Key,
-                Body: fileContent,
-                ContentType: 'text/plain'
-            });
+    async labProductMoveToProcessed(fileName) {
+        const { sourcePath, processedPath } = this.pipelines.labProduct;
+        return this._moveToProcessed(fileName, sourcePath, processedPath);
+    }
 
-            await this.client.send(command);
-            logger.info('Log file uploaded to S3', {
-                localPath: localLogPath,
-                s3Key,
-                bucket: this.bucket
-            });
+    async labProductUploadLogFile(localLogPath, fileName) {
+        const { logsPath } = this.pipelines.labProduct;
+        return this._uploadLogFile(localLogPath, fileName, logsPath);
+    }
 
-            return s3Key;
-        } catch (error) {
-            logger.error('Error uploading log file to S3', {
-                localPath: localLogPath,
-                error: error.message
-            });
-            throw error;
-        }
+    // ==================== Lab Practice Pipeline ====================
+
+    async listLabPracticeFiles() {
+        const { sourcePath, processedPath } = this.pipelines.labPractice;
+        return this._listFiles(sourcePath, processedPath);
+    }
+
+    async labPracticeMoveToProcessed(fileName) {
+        const { sourcePath, processedPath } = this.pipelines.labPractice;
+        return this._moveToProcessed(fileName, sourcePath, processedPath);
+    }
+
+    async labPracticeUploadLogFile(localLogPath, fileName) {
+        const { logsPath } = this.pipelines.labPractice;
+        return this._uploadLogFile(localLogPath, fileName, logsPath);
+    }
+
+    // ==================== Lab Product Mapping Pipeline ====================
+
+    async listLabProductMappingFiles() {
+        const { sourcePath, processedPath } = this.pipelines.labProductMapping;
+        return this._listFiles(sourcePath, processedPath);
+    }
+
+    async labProductMappingMoveToProcessed(fileName) {
+        const { sourcePath, processedPath } = this.pipelines.labProductMapping;
+        return this._moveToProcessed(fileName, sourcePath, processedPath);
+    }
+
+    async labProductMappingUploadLogFile(localLogPath, fileName) {
+        const { logsPath } = this.pipelines.labProductMapping;
+        return this._uploadLogFile(localLogPath, fileName, logsPath);
+    }
+
+    // ==================== Lab Practice Mapping Pipeline ====================
+
+    async listLabPracticeMappingFiles() {
+        const { sourcePath, processedPath } = this.pipelines.labPracticeMapping;
+        return this._listFiles(sourcePath, processedPath);
+    }
+
+    async labPracticeMappingMoveToProcessed(fileName) {
+        const { sourcePath, processedPath } = this.pipelines.labPracticeMapping;
+        return this._moveToProcessed(fileName, sourcePath, processedPath);
+    }
+
+    async labPracticeMappingUploadLogFile(localLogPath, fileName) {
+        const { logsPath } = this.pipelines.labPracticeMapping;
+        return this._uploadLogFile(localLogPath, fileName, logsPath);
+    }
+
+    // ==================== Dental Groups Pipeline ====================
+
+    async listDentalGroupsFiles() {
+        const { sourcePath, processedPath } = this.pipelines.dentalGroups;
+        return this._listFiles(sourcePath, processedPath);
+    }
+
+    async dentalGroupsMoveToProcessed(fileName) {
+        const { sourcePath, processedPath } = this.pipelines.dentalGroups;
+        return this._moveToProcessed(fileName, sourcePath, processedPath);
+    }
+
+    async dentalGroupsUploadLogFile(localLogPath, fileName) {
+        const { logsPath } = this.pipelines.dentalGroups;
+        return this._uploadLogFile(localLogPath, fileName, logsPath);
     }
 }
 

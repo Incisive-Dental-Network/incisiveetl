@@ -24,7 +24,12 @@ process.on('SIGTERM', shutdown);
 
 // Export for use as module
 module.exports = {
-    processFile: (fileName) => etlProcessor.processFile(fileName),
+    processAllOrderFiles: () => etlProcessor.processAllOrderFiles(),
+    processAllLabProductFiles: () => etlProcessor.processAllLabProductFiles(),
+    processAllLabPracticeFiles: () => etlProcessor.processAllLabPracticeFiles(),
+    processAllLabProductMappingFiles: () => etlProcessor.processAllLabProductMappingFiles(),
+    processAllLabPracticeMappingFiles: () => etlProcessor.processAllLabPracticeMappingFiles(),
+    processAllDentalGroupsFiles: () => etlProcessor.processAllDentalGroupsFiles(),
     processAllFiles: () => etlProcessor.processAllFiles(),
     s3Service,
     dbService,
@@ -34,17 +39,42 @@ module.exports = {
 
 // Run if executed directly
 if (require.main === module) {
-    const fileName = process.argv[2];
+    const command = process.argv[2];
 
     (async () => {
         try {
-            if (fileName) {
-                await etlProcessor.processFile(fileName);
-                await shutdown();
-            } else {
-                await etlProcessor.processAllFiles();
-                await shutdown();
+            switch (command) {
+                case 'orders':
+                    await etlProcessor.processAllOrderFiles();
+                    break;
+                case 'products':
+                    await etlProcessor.processAllLabProductFiles();
+                    break;
+                case 'practices':
+                    await etlProcessor.processAllLabPracticeFiles();
+                    break;
+                case 'mappings':
+                    await etlProcessor.processAllLabProductMappingFiles();
+                    break;
+                case 'practice-mappings':
+                    await etlProcessor.processAllLabPracticeMappingFiles();
+                    break;
+                case 'dental-groups':
+                    await etlProcessor.processAllDentalGroupsFiles();
+                    break;
+                case 'all':
+                    await etlProcessor.processAllFiles();
+                    break;
+                default:
+                    // If a filename is provided, process as single order file
+                    if (command) {
+                        await etlProcessor.processOrdersFile(command);
+                    } else {
+                        // No args: process all pipelines
+                        await etlProcessor.processAllFiles();
+                    }
             }
+            await shutdown();
         } catch (error) {
             logger.error('Fatal error', { error: error.message });
             process.exit(1);
