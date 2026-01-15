@@ -4,9 +4,19 @@ module.exports = {
     aws: {
         region: process.env.AWS_REGION || 'us-east-1',
         bucket: process.env.S3_BUCKET || 'dev-incisive-data-csv',
+        
         sourcePath: `${process.env.SOURCEPATH}/`,
         processedPath: `${process.env.SOURCEPATH}/processed/`,
         logsPath: `${process.env.SOURCEPATH}/logs/`,
+        
+        lab_product_sourcepath: `${process.env.LAB_PRODUCT_SOURCEPATH}/`,
+        lab_product_processedPath: `${process.env.LAB_PRODUCT_SOURCEPATH}/processed/`,
+        lab_product_logsPath: `${process.env.LAB_PRODUCT_SOURCEPATH}/logs/`,
+        
+        lab_practice_sourcepath: `${process.env.LAB_PRACTICE_SOURCEPATH}/`,
+        lab_practice_processedPath: `${process.env.LAB_PRACTICE_SOURCEPATH}/processed/`,
+        lab_practice_logsPath: `${process.env.LAB_PRACTICE_SOURCEPATH}/logs/`,
+
         credentials: {
             accessKeyId: process.env.AWS_ACCESS_KEY_ID,
             secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY

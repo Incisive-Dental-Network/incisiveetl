@@ -29,7 +29,7 @@ function mapCSVToSchema(row) {
         submissiondate: row.submissiondate || null,
         shippingdate: row.shippingdate || null,
         casedate: row.casedate || null,
-        caseid: row.caseId || null,
+        caseid: row.caseid || null,
         productid: row.productid || null,
         productdescription: row.productdescription || null,
         quantity: row.quantity ? parseInt(row.quantity) : null,
@@ -56,6 +56,46 @@ function mapCSVToSchema(row) {
         comments: row.comments || null,
         casetotal: row.casetotal || null
     };
+}
+
+
+/**
+ * Map normalized CSV row to database schema
+ * @param {Object} row - Normalized CSV row
+ * @returns {Object} Mapped row for database insertion
+ */
+function mapCSVToLapProductSchema(row) {
+    return {
+        incisive_id: Number(row.incisiveid) || null,
+        incisive_name: row.incisivename || null,
+        category: row.category || null,
+        sub_category: row.subcategory || null
+    };
+}
+
+/**
+ * Map normalized CSV row to database schema
+ * @param {Object} row - Normalized CSV row
+ * @returns {Object} Mapped row for database insertion
+ */
+function mapCSVToLapPracticeSchema(row) {
+    return {
+        practice_id: Number(row.practiceid) || null,
+        dental_group_id: Number(row.dentalgroupid) || null,
+        dental_group_name: row.dentalgroupname || null,
+        address: row.address || null,
+        address_2: row.address2 || null,
+        city: row.city || null,
+        state: row.state || null,
+        zip: row.zip || null,
+        phone: row.phone || null,
+        clinical_email: row.clinicalemail || null,
+        billing_email: row.billingemail || null,
+        incisive_email: row.incisiveemail || null,
+        preferred_contact_method: row.preferredcontactmethod || null,
+        fee_schedule: row.feeschedule || null,
+        status: row.status || null
+    }
 }
 
 /**
@@ -89,6 +129,8 @@ function objectToCSV(data) {
 module.exports = {
     normalizeCSVRow,
     mapCSVToSchema,
+    mapCSVToLapProductSchema,
+    mapCSVToLapPracticeSchema,
     logCSVHeaders,
     objectToCSV
 };

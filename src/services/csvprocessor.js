@@ -2,7 +2,7 @@ const csv = require('csv-parser');
 const { Readable } = require('stream');
 const logger = require('../utils/logger');
 const config = require('../config');
-const { normalizeCSVRow, mapCSVToSchema } = require('../utils/csv-helpers');
+const { normalizeCSVRow, mapCSVToSchema, mapCSVToLapProductSchema, mapCSVToLapPracticeSchema } = require('../utils/csv-helpers');
 
 class CSVprocessor {
   constructor(dbService) {
@@ -81,7 +81,7 @@ class CSVprocessor {
                 productid: mappedRow.productid,
                 fileName
               });
-            } else if (missingFields.length = 0) {
+            } else if (missingFields.length === 0) {
               const result = await this.dbService.insertStageRow(client, mappedRow, fileName);
               csvRemark.push(mappedRow)
               successCount++;
@@ -98,6 +98,255 @@ class CSVprocessor {
               ...row,
               caseid: row.caseid || 'UNKNOWN',
               productid: row.productid || 'UNKNOWN',
+              reason: error.message,
+              missingField: 'ERROR'
+            };
+            missingFieldErrors.push(errorDetail);
+            csvRemark.push(errorDetail)
+
+            logger.error('Error inserting row', {
+              rowNumber,
+              error: error.message,
+              fileName
+            });
+          }
+        }
+
+        logger.info('Batch processed', {
+          batchStart: i + 1,
+          batchEnd: Math.min(i + this.batchSize, rows.length),
+          total: rows.length,
+          successCount,
+          errorCount
+        });
+      }
+
+      await client.query('COMMIT');
+      logger.info('Transaction committed', {
+        fileName,
+        totalRows: rows.length,
+        successCount,
+        errorCount,
+        validRows: successCount,
+        invalidRows: errorCount
+      });
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      logger.error('Transaction rolled back', { error: error.message, fileName });
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    return { successCount, errorCount, missingFieldErrors, csvRemark }; // NEW: Return error details
+  }
+
+  /**
+   * Process rows in batches
+   * MODIFIED: Now tracks missing field details
+   */
+  async processLabProductRows(rows, fileName) {
+    const client = await this.dbService.pool.connect();
+    let successCount = 0;
+    let errorCount = 0;
+    const missingFieldErrors = []; // Track missing field details
+    const csvRemark = []; // Issue marked in error row
+
+    try {
+      await client.query('BEGIN');
+
+      // Process in batches
+      for (let i = 0; i < rows.length; i += this.batchSize) {
+        const batch = rows.slice(i, i + this.batchSize);
+
+        for (let j = 0; j < batch.length; j++) {
+          const row = batch[j];
+          const rowNumber = i + j + 1;
+
+          const normalizedRow = normalizeCSVRow(row);
+          const mappedRow = mapCSVToLapProductSchema(normalizedRow);
+          try {
+            const requiredFields = [
+              'incisive_id',
+              'incisive_name',
+              'category',
+            ];
+
+            const missingFields = requiredFields.filter(
+              key => mappedRow[key] === null || mappedRow[key] === undefined || mappedRow[key] === ""
+            )
+
+            if (missingFields.length) {
+              errorCount++;
+              const errorDetail = {
+                ...row,
+                reason: `Missing required fields: ${missingFields.join(', ')}`,
+                missingFields // array
+              };
+
+              missingFieldErrors.push(errorDetail);
+              csvRemark.push(errorDetail)
+
+              logger.error('Skipping row with missing key', {
+                rowNumber,
+                reason: errorDetail.reason || 'MISSING',
+                fileName
+              });
+            } else if (!missingFields.length) {
+              const result = await this.dbService.insertProductCatlog(client, mappedRow, fileName);
+              if (result.success) {
+                csvRemark.push(mappedRow)
+                successCount++;
+                logger.info('Row inserted successfully', {
+                  fileName,
+                  rowNumber,
+                  caseid: result.caseid
+                });
+              } else {
+                errorCount++;
+                const errorDetail = {
+                  ...row,
+                  reason: result?.errorRow?.error_message,
+                  missingFields // array
+                };
+                csvRemark.push(errorDetail);
+                missingFieldErrors.push(errorDetail);
+                logger.info('Row inserted successfully', {
+                  fileName,
+                  rowNumber,
+                  caseid: result.caseid
+                });
+              }
+            }
+          } catch (error) {
+            errorCount++;
+            const errorDetail = {
+              ...row,
+              reason: error.message,
+              missingField: 'ERROR'
+            };
+            missingFieldErrors.push(errorDetail);
+            csvRemark.push(errorDetail)
+
+            logger.error('Error inserting row', {
+              rowNumber,
+              error: error.message,
+              fileName
+            });
+          }
+        }
+
+        logger.info('Batch processed', {
+          batchStart: i + 1,
+          batchEnd: Math.min(i + this.batchSize, rows.length),
+          total: rows.length,
+          successCount,
+          errorCount
+        });
+      }
+
+      await client.query('COMMIT');
+      logger.info('Transaction committed', {
+        fileName,
+        totalRows: rows.length,
+        successCount,
+        errorCount,
+        validRows: successCount,
+        invalidRows: errorCount
+      });
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      logger.error('Transaction rolled back', { error: error.message, fileName });
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    return { successCount, errorCount, missingFieldErrors, csvRemark }; // NEW: Return error details
+  }
+
+  /**
+  * Process rows in batches
+  * MODIFIED: Now tracks missing field details
+  */
+  async processLabPracticeRows(rows, fileName) {
+    const client = await this.dbService.pool.connect();
+    let successCount = 0;
+    let errorCount = 0;
+    const missingFieldErrors = []; // Track missing field details
+    const csvRemark = []; // Issue marked in error row
+
+    try {
+      await client.query('BEGIN');
+
+      // Process in batches
+      for (let i = 0; i < rows.length; i += this.batchSize) {
+        const batch = rows.slice(i, i + this.batchSize);
+
+        for (let j = 0; j < batch.length; j++) {
+          const row = batch[j];
+          const rowNumber = i + j + 1;
+
+          const normalizedRow = normalizeCSVRow(row);
+          const mappedRow = mapCSVToLapPracticeSchema(normalizedRow);
+          try {
+            const requiredFields = [
+              'practice_id',
+              'dental_group_id'
+            ];
+
+            const missingFields = requiredFields.filter(
+              key => mappedRow[key] === null || mappedRow[key] === undefined || mappedRow[key] === ""
+            )
+
+            if (missingFields.length) {
+              errorCount++;
+              const errorDetail = {
+                ...row,
+                reason: `Missing required fields: ${missingFields.join(', ')}`,
+                missingFields // array
+              };
+
+              missingFieldErrors.push(errorDetail);
+              csvRemark.push(errorDetail)
+
+              logger.error('Skipping row with missing key', {
+                rowNumber,
+                reason: errorDetail.reason || 'MISSING',
+                fileName
+              });
+            } else if (!missingFields.length) {
+              const result = await this.dbService.insertDentalPractices(client, mappedRow, fileName);
+              if (result.success) {
+                csvRemark.push(mappedRow)
+                successCount++;
+                logger.info('Row inserted successfully', {
+                  fileName,
+                  rowNumber,
+                  caseid: result.caseid
+                });
+              } else {
+                errorCount++;
+                const errorDetail = {
+                  ...row,
+                  reason: result?.errorRow?.error_message,
+                  missingFields // array
+                };
+                csvRemark.push(errorDetail);
+                missingFieldErrors.push(errorDetail);
+                logger.info('Row inserted successfully', {
+                  fileName,
+                  rowNumber,
+                  caseid: result.caseid
+                });
+              }
+            }
+          } catch (error) {
+            errorCount++;
+            const errorDetail = {
+              ...row,
               reason: error.message,
               missingField: 'ERROR'
             };

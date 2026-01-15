@@ -117,6 +117,106 @@ class DBService {
     }
 
     /**
+     * 
+     */
+    async insertProductCatlog(client, row) {
+        const sql = `
+            INSERT INTO incisive_product_catalog (
+            incisive_id, incisive_name, category, sub_category
+            ) VALUES (
+            $1, $2, $3, $4
+            )
+            ON CONFLICT (incisive_id) DO NOTHING
+        `;
+
+        const values = [
+            row.incisive_id,
+            row.incisive_name,
+            row.category,
+            row.sub_category,
+        ];
+
+        try {
+            await client.query(sql, values);
+            return { success: true };
+
+        } catch (error) {
+            return {
+                success: false,
+                errorRow: {
+                    row,
+                    error_code: error.code,
+                    error_message: error.message
+                }
+            }
+        }
+    }
+
+    /**
+     * 
+     */
+    async insertDentalPractices(client, row) {
+        const sql = `
+            INSERT INTO dental_practices (
+                practice_id,
+                dental_group_id,
+                dental_group_name,
+                address,
+                address_2,
+                city,
+                state,
+                zip,
+                phone,
+                clinical_email,
+                billing_email,
+                incisive_email,
+                preferred_contact_method,
+                fee_schedule,
+                status
+            ) VALUES (
+                $1, $2, $3, $4, $5,
+                $6, $7, $8, $9, $10,
+                $11, $12, $13, $14, $15
+            )
+                ON CONFLICT (practice_id) DO NOTHING
+            `;
+
+        const values = [
+            row.practice_id,
+            row.dental_group_id,
+            row.dental_group_name,
+            row.address,
+            row.address_2,
+            row.city,
+            row.state,
+            row.zip,
+            row.phone,
+            row.clinical_email,
+            row.billing_email,
+            row.incisive_email,
+            row.preferred_contact_method,
+            row.fee_schedule,
+            row.status
+        ];
+
+
+        try {
+            await client.query(sql, values);
+            return { success: true };
+
+        } catch (error) {
+            return {
+                success: false,
+                errorRow: {
+                    row,
+                    error_code: error.code,
+                    error_message: error.message
+                }
+            }
+        }
+    }
+
+    /**
      * Close database pool
      */
     async close() {
