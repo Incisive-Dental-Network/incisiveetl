@@ -99,7 +99,7 @@ class ETLProcessor {
 
             return remarkCSVFilePath;
         } catch (error) {
-            logger.error('Error appending summary to log', { error: error.message });
+            logger.error('Error createRemarkCSV summary to log', { error: error.message });
             throw error;
         }
     }
@@ -119,7 +119,7 @@ class ETLProcessor {
         try {
             // 1. Check if file exists
             logger.info('Step 1: Checking if file exists in S3', { fileName });
-            const exists = await this.s3Service.checkFileExists(fileName);
+            const exists = await this.s3Service.checkFileExists(fileName, this.s3Service.sourcePath);
 
             if (!exists) {
                 throw new Error(`File not found: ${fileName}`);
@@ -128,7 +128,7 @@ class ETLProcessor {
 
             // 2. Get and parse CSV
             logger.info('Step 2: Retrieving and parsing CSV file', { fileName });
-            const stream = await this.s3Service.getFile(fileName);
+            const stream = await this.s3Service.getFile(fileName, this.s3Service.sourcePath);
             const rows = await this.csvProcessor.parseCSV(stream);
             logger.info('CSV parsed successfully', { rowCount: rows.length, fileName });
 
@@ -173,7 +173,6 @@ class ETLProcessor {
 
             const duration = Date.now() - startTime;
 
-            
             const results = {
                 rowCount: rows.length,
                 successCount,
@@ -181,12 +180,11 @@ class ETLProcessor {
                 missingFieldErrors,
                 duration
             };
-            
+
             // NEW: 6. Generate and append summary to log
             logger.info('Step 6: Generating summary report', { fileName });
             const logFilePath = await this.appendSummaryToLog(fileName, results);
-            
-            
+
             if (errorCount > 0) {
                 const updatesCSVRemark = objectToCSV(csvRemark)
                 const remarkCSVFilePath = await this.createRemarkCSV(fileName, updatesCSVRemark);
@@ -197,8 +195,247 @@ class ETLProcessor {
                     remarkCSVFilePath,
                     `${fileName}`
                 );
+                logger.info('Log file uploaded successfully', { s3LogKey });
             }
-            logger.info('Log file uploaded successfully', { s3LogKey });
+
+            logger.info('✓ File processing completed successfully', {
+                fileName,
+                totalRows: rows.length,
+                validRows: successCount,
+                invalidRows: errorCount,
+                skippedReason: errorCount > 0 ? 'Missing caseid or productid' : 'None',
+                duration: `${duration}ms`,
+                durationSeconds: `${(duration / 1000).toFixed(2)}s`,
+                // logFileS3: s3LogKey
+            });
+            logger.info('='.repeat(80));
+
+            return {
+                success: true,
+                rowCount: rows.length,
+                successCount,
+                errorCount,
+                skippedCount: errorCount,
+                missingFieldErrors,
+                duration,
+                processedAt: new Date().toISOString(),
+                // logFileS3: s3LogKey
+            };
+
+        } catch (error) {
+            const duration = Date.now() - startTime;
+            logger.error('✗ File processing failed', {
+                fileName,
+                error: error.message,
+                stack: error.stack,
+                duration: `${duration}ms`
+            });
+            logger.info('='.repeat(80));
+            throw error;
+        }
+    }
+
+    /**
+     * Process a single file
+     * MODIFIED: Added summary generation and S3 upload
+     */
+    async processLabProductFile(fileName) {
+        const startTime = Date.now();
+        logger.info('='.repeat(80));
+        logger.info('Starting file processing', {
+            fileName,
+            startTime: new Date().toISOString()
+        });
+
+        try {
+            // 1. Check if file exists
+            logger.info('Step 1: Checking if file exists in S3', { fileName });
+            const exists = await this.s3Service.checkFileExists(fileName, this.s3Service.lab_product_sourcepath);
+
+            if (!exists) {
+                throw new Error(`File not found: ${fileName}`);
+            }
+            logger.info('File exists in S3', { fileName });
+
+            // 2. Get and parse CSV
+            logger.info('Step 2: Retrieving and parsing CSV file', { fileName });
+            const stream = await this.s3Service.getFile(fileName, this.s3Service.lab_product_sourcepath);
+            const rows = await this.csvProcessor.parseCSV(stream);
+            logger.info('CSV parsed successfully', { rowCount: rows.length, fileName });
+
+            if (rows.length === 0) {
+                logger.warn('CSV file is empty, skipping processing', { fileName });
+                return {
+                    success: true,
+                    rowCount: 0,
+                    successCount: 0,
+                    errorCount: 0,
+                    missingFieldErrors: [],
+                    skipped: true
+                };
+            }
+
+            const { successCount, errorCount, missingFieldErrors, csvRemark } = await this.csvProcessor.processLabProductRows(rows, fileName);
+
+            logger.info('Lab Product table populated', {
+                successCount,
+                errorCount,
+                message: errorCount > 0
+                    ? `${errorCount} rows skipped`
+                    : 'All rows valid'
+            });
+
+            // 5. Move file to processed
+            logger.info('Step 5: Moving file to processed folder', { fileName });
+            await this.s3Service.LabProductMoveToProcessed(fileName);
+            logger.info('File moved to processed folder');
+
+            const duration = Date.now() - startTime;
+
+
+            const results = {
+                rowCount: rows.length,
+                successCount,
+                errorCount,
+                missingFieldErrors,
+                duration
+            };
+
+            // NEW: 6. Generate and append summary to log
+            logger.info('Step 6: Generating summary report', { fileName });
+            const logFilePath = await this.appendSummaryToLog(fileName, results);
+
+            if (errorCount > 0) {
+                const updatesCSVRemark = objectToCSV(csvRemark)
+                const remarkCSVFilePath = await this.createRemarkCSV(fileName, updatesCSVRemark);
+
+                // NEW: 7. Upload log file to S3
+                logger.info('Step 7: Uploading log file to S3', { fileName });
+                const s3LogKey = await this.s3Service.LabProductUploadLogFile(
+                    remarkCSVFilePath,
+                    `${fileName}`
+                );
+                logger.info('Log file uploaded successfully', { s3LogKey });
+            }
+
+            logger.info('✓ File processing completed successfully', {
+                fileName,
+                totalRows: rows.length,
+                validRows: successCount,
+                invalidRows: errorCount,
+                skippedReason: errorCount > 0 ? 'Missing caseid or productid' : 'None',
+                duration: `${duration}ms`,
+                durationSeconds: `${(duration / 1000).toFixed(2)}s`,
+                // logFileS3: s3LogKey
+            });
+            logger.info('='.repeat(80));
+
+            return {
+                success: true,
+                rowCount: rows.length,
+                successCount,
+                errorCount,
+                skippedCount: errorCount,
+                missingFieldErrors,
+                duration,
+                processedAt: new Date().toISOString(),
+                // logFileS3: s3LogKey
+            };
+
+        } catch (error) {
+            const duration = Date.now() - startTime;
+            logger.error('✗ File processing failed', {
+                fileName,
+                error: error.message,
+                stack: error.stack,
+                duration: `${duration}ms`
+            });
+            logger.info('='.repeat(80));
+            throw error;
+        }
+    }
+
+    /**
+     * Process a single file
+     * MODIFIED: Added summary generation and S3 upload
+     */
+    async processLabPracticeFile(fileName) {
+        const startTime = Date.now();
+        logger.info('='.repeat(80));
+        logger.info('Starting file processing', {
+            fileName,
+            startTime: new Date().toISOString()
+        });
+
+        try {
+            // 1. Check if file exists
+            logger.info('Step 1: Checking if file exists in S3', { fileName });
+            const exists = await this.s3Service.checkFileExists(fileName, this.s3Service.lab_practice_sourcepath);
+
+            if (!exists) {
+                throw new Error(`File not found: ${fileName}`);
+            }
+            logger.info('File exists in S3', { fileName });
+
+            // 2. Get and parse CSV
+            logger.info('Step 2: Retrieving and parsing CSV file', { fileName });
+            const stream = await this.s3Service.getFile(fileName, this.s3Service.lab_practice_sourcepath);
+            const rows = await this.csvProcessor.parseCSV(stream);
+            logger.info('CSV parsed successfully', { rowCount: rows.length, fileName });
+
+            if (rows.length === 0) {
+                logger.warn('CSV file is empty, skipping processing', { fileName });
+                return {
+                    success: true,
+                    rowCount: 0,
+                    successCount: 0,
+                    errorCount: 0,
+                    missingFieldErrors: [],
+                    skipped: true
+                };
+            }
+
+            const { successCount, errorCount, missingFieldErrors, csvRemark } = await this.csvProcessor.processLabPracticeRows(rows, fileName);
+
+            logger.info('Dental Practices table populated', {
+                successCount,
+                errorCount,
+                message: errorCount > 0
+                    ? `${errorCount} rows skipped`
+                    : 'All rows valid'
+            });
+
+            // 5. Move file to processed
+            logger.info('Step 5: Moving file to processed folder', { fileName });
+            await this.s3Service.LabPracticeMoveToProcessed(fileName);
+            logger.info('File moved to processed folder');
+
+            const duration = Date.now() - startTime;
+
+
+            const results = {
+                rowCount: rows.length,
+                successCount,
+                errorCount,
+                missingFieldErrors,
+                duration
+            };
+
+            // NEW: 6. Generate and append summary to log
+            logger.info('Step 6: Generating summary report', { fileName });
+            const logFilePath = await this.appendSummaryToLog(fileName, results);
+            if (errorCount > 0) {
+                const updatesCSVRemark = objectToCSV(csvRemark)
+                const remarkCSVFilePath = await this.createRemarkCSV(fileName, updatesCSVRemark);
+
+                // NEW: 7. Upload log file to S3
+                logger.info('Step 7: Uploading log file to S3', { fileName });
+                const s3LogKey = await this.s3Service.LabPracticeUploadLogFile(
+                    remarkCSVFilePath,
+                    `${fileName}`
+                );
+                logger.info('Log file uploaded successfully', { s3LogKey });
+            }
 
             logger.info('✓ File processing completed successfully', {
                 fileName,
@@ -248,39 +485,107 @@ class ETLProcessor {
                 path: this.s3Service.sourcePath
             });
 
-            const files = await this.s3Service.listFiles();
+            logger.info('Scanning for files in S3 product', {
+                bucket: this.s3Service.bucket,
+                path: this.s3Service.lab_product_sourcepath
+            });
 
-            if (files.length === 0) {
+            logger.info('Scanning for files in S3 practice', {
+                bucket: this.s3Service.bucket,
+                path: this.s3Service.lab_practice_sourcepath
+            });
+
+            const files = await this.s3Service.listFiles();
+            const labProductFiles = await this.s3Service.listLabProductFiles();
+            const labPracticeFiles = await this.s3Service.listLabPracticeFiles();
+
+            if (files.length === 0 && labProductFiles.length === 0 && files.length === 0) {
                 logger.info('No files found to process');
                 return { processed: 0, files: [] };
             }
 
-            logger.info(`Found ${files.length} CSV file(s) to process`, { files });
+            /**
+             * 
+             */
+            if (files.length > 0) {
+                logger.info(`Found ${files.length} CSV file(s) to process`, { files });
 
-            const results = [];
-            for (const file of files) {
-                try {
-                    const result = await this.processFile(file);
-                    results.push({ file, ...result });
-                } catch (error) {
-                    results.push({ file, success: false, error: error.message });
+                const results = [];
+                for (const file of files) {
+                    try {
+                        const result = await this.processFile(file);
+                        results.push({ file, ...result });
+                    } catch (error) {
+                        results.push({ file, success: false, error: error.message });
+                    }
                 }
+
+                const successful = results.filter(r => r.success).length;
+                const failed = results.filter(r => !r.success).length;
+
+                logger.info('All files processed', {
+                    total: files.length,
+                    successful,
+                    failed,
+                    results
+                });
+
+                return { processed: files.length, successful, failed, results };
             }
 
-            const successful = results.filter(r => r.success).length;
-            const failed = results.filter(r => !r.success).length;
+            if (labProductFiles.length > 0) {
+                logger.info(`Found labProductFiles ${files.length} CSV file(s) to process`, { labProductFiles });
 
-            logger.info('All files processed', {
-                total: files.length,
-                successful,
-                failed,
-                results
-            });
+                const results = [];
+                for (const file of labProductFiles) {
+                    try {
+                        const result = await this.processLabProductFile(file);
+                        results.push({ file, ...result });
+                    } catch (error) {
+                        results.push({ file, success: false, error: error.message });
+                    }
+                }
 
-            return { processed: files.length, successful, failed, results };
+                const successful = results.filter(r => r.success).length;
+                const failed = results.filter(r => !r.success).length;
 
+                logger.info('All labProductFiles processed', {
+                    total: labProductFiles.length,
+                    successful,
+                    failed,
+                    results
+                });
+
+                return { processed: labProductFiles.length, successful, failed, results };
+            }
+
+            if (labPracticeFiles.length > 0) {
+                logger.info(`Found ${labPracticeFiles.length} CSV file(s) to process`, { labPracticeFiles });
+
+                const results = [];
+                for (const file of labPracticeFiles) {
+                    try {
+                        const result = await this.processLabPracticeFile(file);
+                        results.push({ file, ...result });
+                    } catch (error) {
+                        results.push({ file, success: false, error: error.message });
+                    }
+                }
+
+                const successful = results.filter(r => r.success).length;
+                const failed = results.filter(r => !r.success).length;
+
+                logger.info('All labPracticeFiles processed', {
+                    total: labPracticeFiles.length,
+                    successful,
+                    failed,
+                    results
+                });
+
+                return { processed: labPracticeFiles.length, successful, failed, results };
+            }
         } catch (error) {
-            logger.error('Error processing files', { error: error.message });
+            logger.error('Error processing Files', { error: error.message });
             throw error;
         }
     }

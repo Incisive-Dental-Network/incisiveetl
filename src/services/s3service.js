@@ -23,19 +23,31 @@ class S3Service {
 
         this.client = new S3Client(s3Config);
         this.bucket = config.aws.bucket;
+
+        // orders
         this.sourcePath = config.aws.sourcePath;
         this.processedPath = config.aws.processedPath;
         this.logsPath = config.aws.logsPath
+
+        //product
+        this.lab_product_sourcepath = config.aws.lab_product_sourcepath;
+        this.lab_product_processedPath = config.aws.lab_product_processedPath;
+        this.lab_product_logsPath = config.aws.lab_product_logsPath
+
+        //practice
+        this.lab_practice_sourcepath = config.aws.lab_practice_sourcepath;
+        this.lab_practice_processedPath = config.aws.lab_practice_processedPath;
+        this.lab_practice_logsPath = config.aws.lab_practice_logsPath
     }
 
     /**
      * Check if file exists in S3
      */
-    async checkFileExists(fileName) {
+    async checkFileExists(fileName, sourcePath) {
         try {
             const command = new ListObjectsV2Command({
                 Bucket: this.bucket,
-                Prefix: this.sourcePath + fileName,
+                Prefix: sourcePath + fileName,
                 MaxKeys: 1
             });
 
@@ -50,11 +62,11 @@ class S3Service {
     /**
      * Get file from S3
      */
-    async getFile(fileName) {
+    async getFile(fileName, sourcePath) {
         try {
             const command = new GetObjectCommand({
                 Bucket: this.bucket,
-                Key: this.sourcePath + fileName
+                Key: sourcePath + fileName
             });
 
             const response = await this.client.send(command);
@@ -96,6 +108,64 @@ class S3Service {
     }
 
     /**
+     * List all CSV files in source Lab Product
+     */
+    async listLabProductFiles() {
+        try {
+            const command = new ListObjectsV2Command({
+                Bucket: this.bucket,
+                Prefix: this.lab_product_sourcepath
+            });
+
+            const response = await this.client.send(command);
+
+            if (!response.Contents || response.Contents.length === 0) {
+                return [];
+            }
+
+            return response.Contents
+                .filter(obj => {
+                    return obj.Key !== this.lab_product_sourcepath &&
+                        !obj.Key.startsWith(this.lab_product_processedPath) &&
+                        obj.Key.endsWith('.csv');
+                })
+                .map(obj => obj.Key.replace(this.lab_product_sourcepath, ''));
+        } catch (error) {
+            logger.error('Error listing files of lab product', { error: error.message });
+            throw error;
+        }
+    }
+
+    /**
+     * List all CSV files in source folder Lab Practice
+     */
+    async listLabPracticeFiles() {
+        try {
+            const command = new ListObjectsV2Command({
+                Bucket: this.bucket,
+                Prefix: this.lab_practice_sourcepath
+            });
+
+            const response = await this.client.send(command);
+
+            if (!response.Contents || response.Contents.length === 0) {
+                return [];
+            }
+
+            return response.Contents
+                .filter(obj => {
+                    return obj.Key !== this.lab_practice_sourcepath &&
+                        !obj.Key.startsWith(this.lab_practice_processedPath) &&
+                        obj.Key.endsWith('.csv');
+                })
+                .map(obj => obj.Key.replace(this.lab_practice_sourcepath, ''));
+        } catch (error) {
+            logger.error('Error listing files in lab practice', { error: error.message });
+            throw error;
+        }
+    }
+
+    /**
      * Move processed file to processed folder
      */
     async moveToProcessed(fileName) {
@@ -103,6 +173,72 @@ class S3Service {
             const sourceKey = this.sourcePath + fileName;
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
             const destKey = this.processedPath + `${timestamp}_${fileName}`;
+
+            // Copy file
+            const copyCommand = new CopyObjectCommand({
+                Bucket: this.bucket,
+                CopySource: `${this.bucket}/${sourceKey}`,
+                Key: destKey
+            });
+            await this.client.send(copyCommand);
+            logger.info('File copied to processed folder', { sourceKey, destKey });
+
+            // Delete original
+            const deleteCommand = new DeleteObjectCommand({
+                Bucket: this.bucket,
+                Key: sourceKey
+            });
+            // await this.client.send(deleteCommand);********
+            logger.info('Original file deleted', { sourceKey });
+
+            return destKey;
+        } catch (error) {
+            logger.error('Error moving file', { fileName, error: error.message });
+            throw error;
+        }
+    }
+
+    /**
+     * Move processed file to processed folder
+     */
+    async LabProductMoveToProcessed(fileName) {
+        try {
+            const sourceKey = this.lab_product_sourcepath + fileName;
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const destKey = this.lab_product_processedPath + `${timestamp}_${fileName}`;
+
+            // Copy file
+            const copyCommand = new CopyObjectCommand({
+                Bucket: this.bucket,
+                CopySource: `${this.bucket}/${sourceKey}`,
+                Key: destKey
+            });
+            await this.client.send(copyCommand);
+            logger.info('File copied to processed folder', { sourceKey, destKey });
+
+            // Delete original
+            const deleteCommand = new DeleteObjectCommand({
+                Bucket: this.bucket,
+                Key: sourceKey
+            });
+            // await this.client.send(deleteCommand);********
+            logger.info('Original file deleted', { sourceKey });
+
+            return destKey;
+        } catch (error) {
+            logger.error('Error moving file', { fileName, error: error.message });
+            throw error;
+        }
+    }
+
+    /**
+     * Move processed file to processed folder
+     */
+    async LabPracticeMoveToProcessed(fileName) {
+        try {
+            const sourceKey = this.lab_practice_sourcepath + fileName;
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const destKey = this.lab_practice_processedPath + `${timestamp}_${fileName}`;
 
             // Copy file
             const copyCommand = new CopyObjectCommand({
@@ -144,6 +280,65 @@ class S3Service {
             await this.client.send(command);
             logger.info('Log file uploaded to S3', {
                 localPath: localLogPath, 
+                s3Key,
+                bucket: this.bucket
+            });
+
+            return s3Key;
+        } catch (error) {
+            logger.error('Error uploading log file to S3', {
+                localPath: localLogPath,
+                error: error.message
+            });
+            throw error;
+        }
+    }
+
+    async LabProductUploadLogFile(localLogPath, fileName) {
+        try {
+            const fileContent = await fs.readFile(localLogPath);
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const s3Key = `${this.lab_product_logsPath}${fileName}_${timestamp}`;
+
+            const command = new PutObjectCommand({
+                Bucket: this.bucket,
+                Key: s3Key,
+                Body: fileContent,
+                ContentType: 'text/plain'
+            });
+
+            await this.client.send(command);
+            logger.info('Log file uploaded to S3', {
+                localPath: localLogPath,
+                s3Key,
+                bucket: this.bucket
+            });
+
+            return s3Key;
+        } catch (error) {
+            logger.error('Error uploading log file to S3', {
+                localPath: localLogPath,
+                error: error.message
+            });
+            throw error;
+        }
+    }
+
+    async LabPracticeUploadLogFile(localLogPath, fileName) {
+        try {
+            const fileContent = await fs.readFile(localLogPath);
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const s3Key = `${this.lab_practice_logsPath}${fileName}_${timestamp}`;
+            const command = new PutObjectCommand({
+                Bucket: this.bucket,
+                Key: s3Key,
+                Body: fileContent,
+                ContentType: 'text/plain'
+            });
+
+            await this.client.send(command);
+            logger.info('Log file uploaded to S3', {
+                localPath: localLogPath,
                 s3Key,
                 bucket: this.bucket
             });
