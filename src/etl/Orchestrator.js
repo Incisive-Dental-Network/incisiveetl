@@ -354,7 +354,7 @@ class Orchestrator {
 
             let files;
             try {
-                files = await this.s3Handler.listFiles(paths.sourcePath, paths.processedPath);
+                files = await this.s3Handler.listFiles(paths.sourcePath, paths.processedPath, paths.logsPath);
             } catch (error) {
                 pipelineLogger.error('Error listing files in S3');
                 throw error;

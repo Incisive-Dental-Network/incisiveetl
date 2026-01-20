@@ -141,13 +141,14 @@ class S3Handler {
     }
 
     /**
-     * List all CSV files in a source path (excludes processed folder)
+     * List all CSV files in a source path (excludes processed and logs folders)
      * Supports pagination for large buckets
      * @param {string} sourcePath - S3 prefix to search
      * @param {string} processedPath - Processed folder path to exclude
+     * @param {string} [logsPath] - Logs folder path to exclude
      * @returns {Promise<string[]>} Array of file names (without path prefix)
      */
-    async listFiles(sourcePath, processedPath) {
+    async listFiles(sourcePath, processedPath, logsPath) {
         try {
             const allFiles = [];
             let continuationToken = undefined;
@@ -164,9 +165,10 @@ class S3Handler {
                 if (response.Contents && response.Contents.length > 0) {
                     const files = response.Contents
                         .filter(obj => {
-                            // Exclude folder itself, processed folder, and non-CSV files
+                            // Exclude folder itself, processed folder, logs folder, and non-CSV files
                             return obj.Key !== sourcePath &&
                                 !obj.Key.startsWith(processedPath) &&
+                                (!logsPath || !obj.Key.startsWith(logsPath)) &&
                                 obj.Key.endsWith('.csv');
                         })
                         .map(obj => obj.Key.replace(sourcePath, ''));
