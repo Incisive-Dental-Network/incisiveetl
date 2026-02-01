@@ -4,13 +4,13 @@
  * ETL pipeline for processing dental group organization data.
  *
  * Target table: dental_groups
- * Conflict handling: ON CONFLICT (dental_group_id) DO NOTHING
+ * Conflict handling: ON CONFLICT (dental_group_id) DO UPDATE (upsert)
  *
  * Required CSV columns:
  * - dental_group_id (dentalgroupid in CSV) - BIGINT PRIMARY KEY
  *
  * Optional columns:
- * - name, address, address_2, city, state, zip
+ * - dental_group_sfdc_id (Salesforce ID), name, address, address_2, city, state, zip
  * - account_type, centralized_billing (boolean), sales_channel, sales_rep
  *
  * Environment variable: DENTAL_GROUPS_SOURCEPATH
@@ -59,6 +59,7 @@ class DentalGroupsPipeline extends BasePipeline {
 
         return {
             dental_group_id: Number.isNaN(dentalGroupId) ? null : dentalGroupId,
+            dental_group_sfdc_id: row.dentalgroupsfdcid || null,
             name: row.name || null,
             address: row.address || null,
             address_2: row.address2 || null,
@@ -73,12 +74,13 @@ class DentalGroupsPipeline extends BasePipeline {
     }
 
     /**
-     * Build INSERT query with ON CONFLICT handling
+     * Build INSERT query with ON CONFLICT handling (upsert)
      */
     buildInsertQuery(mappedRow) {
         const sql = `
             INSERT INTO dental_groups (
                 dental_group_id,
+                dental_group_sfdc_id,
                 name,
                 address,
                 address_2,
@@ -90,14 +92,26 @@ class DentalGroupsPipeline extends BasePipeline {
                 sales_channel,
                 sales_rep
             ) VALUES (
-                $1, $2, $3, $4, $5,
-                $6, $7, $8, $9, $10, $11
+                $1, $2, $3, $4, $5, $6,
+                $7, $8, $9, $10, $11, $12
             )
-            ON CONFLICT (dental_group_id) DO NOTHING
+            ON CONFLICT (dental_group_id) DO UPDATE SET
+                dental_group_sfdc_id = EXCLUDED.dental_group_sfdc_id,
+                name = EXCLUDED.name,
+                address = EXCLUDED.address,
+                address_2 = EXCLUDED.address_2,
+                city = EXCLUDED.city,
+                state = EXCLUDED.state,
+                zip = EXCLUDED.zip,
+                account_type = EXCLUDED.account_type,
+                centralized_billing = EXCLUDED.centralized_billing,
+                sales_channel = EXCLUDED.sales_channel,
+                sales_rep = EXCLUDED.sales_rep
         `;
 
         const values = [
             mappedRow.dental_group_id,
+            mappedRow.dental_group_sfdc_id,
             mappedRow.name,
             mappedRow.address,
             mappedRow.address_2,

@@ -4,7 +4,7 @@
  * SOQL query and field mapping for extracting dental groups from Salesforce.
  *
  * Target CSV columns (matching dental-groups pipeline expectations):
- * - dentalgroupid, name, address, address2, city, state, zip
+ * - dentalgroupid, dentalgroupsfdcid, name, address, address2, city, state, zip
  * - accounttype, centralizedbilling, saleschannel, salesrep
  */
 
@@ -20,6 +20,7 @@ module.exports = {
      */
     soql: `
         SELECT
+            Id,
             Corporate_ID__c,
             Name,
             ShippingStreet,
@@ -45,6 +46,7 @@ module.exports = {
     mapRecord(record) {
         return {
             dentalgroupid: record.Corporate_ID__c || '',
+            dentalgroupsfdcid: record.Id || '',
             name: record.Name || '',
             address: record.ShippingStreet || '',
             address2: '', // No separate address2 field in standard SF
