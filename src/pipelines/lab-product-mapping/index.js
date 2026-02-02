@@ -4,7 +4,7 @@
  * ETL pipeline for mapping lab products to incisive products.
  *
  * Target table: lab_product_mapping
- * Conflict handling: ON CONFLICT (lab_id, lab_product_id) DO NOTHING
+ * Conflict handling: ON CONFLICT (lab_id, lab_product_id) DO UPDATE (upsert)
  *
  * Required CSV columns:
  * - lab_id (labid in CSV)
@@ -66,7 +66,8 @@ class LabProductMappingPipeline extends BasePipeline {
             ) VALUES (
                 $1, $2, $3
             )
-            ON CONFLICT (lab_id, lab_product_id) DO NOTHING
+            ON CONFLICT (lab_id, lab_product_id) DO UPDATE SET
+                incisive_product_id = EXCLUDED.incisive_product_id
         `;
 
         const values = [

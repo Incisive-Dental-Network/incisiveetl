@@ -4,7 +4,7 @@
  * ETL pipeline for mapping labs to practices.
  *
  * Target table: lab_practice_mapping
- * Conflict handling: ON CONFLICT (lab_id, lab_practice_id) DO NOTHING
+ * Conflict handling: ON CONFLICT (lab_id, lab_practice_id) DO UPDATE (upsert)
  *
  * Required CSV columns:
  * - lab_id (labid in CSV)
@@ -66,7 +66,8 @@ class LabPracticeMappingPipeline extends BasePipeline {
             ) VALUES (
                 $1, $2, $3
             )
-            ON CONFLICT (lab_id, lab_practice_id) DO NOTHING
+            ON CONFLICT (lab_id, lab_practice_id) DO UPDATE SET
+                practice_id = EXCLUDED.practice_id
         `;
 
         const values = [

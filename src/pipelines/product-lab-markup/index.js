@@ -4,7 +4,7 @@
  * ETL pipeline for processing product lab markup/pricing data.
  *
  * Target table: product_lab_markup
- * Conflict handling: ON CONFLICT (lab_id, lab_product_id) DO NOTHING
+ * Conflict handling: ON CONFLICT (lab_id, lab_product_id) DO UPDATE (upsert)
  *
  * Required CSV columns:
  * - lab_id (labid in CSV) - BIGINT
@@ -92,7 +92,12 @@ class ProductLabMarkupPipeline extends BasePipeline {
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7
             )
-            ON CONFLICT (lab_id, lab_product_id) DO NOTHING
+            ON CONFLICT (lab_id, lab_product_id) DO UPDATE SET
+                incisive_product_id = EXCLUDED.incisive_product_id,
+                cost = EXCLUDED.cost,
+                standard_price = EXCLUDED.standard_price,
+                nf_price = EXCLUDED.nf_price,
+                commitment_eligible = EXCLUDED.commitment_eligible
         `;
 
         const values = [

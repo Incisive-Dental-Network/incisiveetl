@@ -4,7 +4,7 @@
  * ETL pipeline for processing dental practices CSV files.
  *
  * Target table: dental_practices
- * Conflict handling: ON CONFLICT (practice_id) DO NOTHING
+ * Conflict handling: ON CONFLICT (practice_id) DO UPDATE (upsert)
  *
  * Required CSV columns:
  * - practice_id (practiceid in CSV)
@@ -92,7 +92,21 @@ class DentalPracticesPipeline extends BasePipeline {
                 $6, $7, $8, $9, $10,
                 $11, $12, $13, $14, $15
             )
-            ON CONFLICT (practice_id) DO NOTHING
+            ON CONFLICT (practice_id) DO UPDATE SET
+                dental_group_id = EXCLUDED.dental_group_id,
+                dental_group_name = EXCLUDED.dental_group_name,
+                address = EXCLUDED.address,
+                address_2 = EXCLUDED.address_2,
+                city = EXCLUDED.city,
+                state = EXCLUDED.state,
+                zip = EXCLUDED.zip,
+                phone = EXCLUDED.phone,
+                clinical_email = EXCLUDED.clinical_email,
+                billing_email = EXCLUDED.billing_email,
+                incisive_email = EXCLUDED.incisive_email,
+                preferred_contact_method = EXCLUDED.preferred_contact_method,
+                fee_schedule = EXCLUDED.fee_schedule,
+                status = EXCLUDED.status
         `;
 
         const values = [

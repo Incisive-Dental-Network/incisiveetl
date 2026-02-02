@@ -4,7 +4,7 @@
  * ETL pipeline for processing product catalog CSV files.
  *
  * Target table: incisive_product_catalog
- * Conflict handling: ON CONFLICT (incisive_id) DO NOTHING
+ * Conflict handling: ON CONFLICT (incisive_id) DO UPDATE (upsert)
  *
  * Required CSV columns:
  * - incisive_id (incisiveid in CSV)
@@ -65,7 +65,10 @@ class ProductCatalogPipeline extends BasePipeline {
             ) VALUES (
                 $1, $2, $3, $4
             )
-            ON CONFLICT (incisive_id) DO NOTHING
+            ON CONFLICT (incisive_id) DO UPDATE SET
+                incisive_name = EXCLUDED.incisive_name,
+                category = EXCLUDED.category,
+                sub_category = EXCLUDED.sub_category
         `;
 
         const values = [

@@ -4,7 +4,7 @@
  * ETL pipeline for processing product lab revenue share data.
  *
  * Target table: product_lab_rev_share
- * Conflict handling: ON CONFLICT (lab_id, lab_product_id, fee_schedule_name) DO NOTHING
+ * Conflict handling: ON CONFLICT (lab_id, lab_product_id, fee_schedule_name) DO UPDATE (upsert)
  *
  * Required CSV columns (composite primary key):
  * - lab_id (labid in CSV) - BIGINT
@@ -89,7 +89,10 @@ class ProductLabRevSharePipeline extends BasePipeline {
             ) VALUES (
                 $1, $2, $3, $4, $5, $6
             )
-            ON CONFLICT (lab_id, lab_product_id, fee_schedule_name) DO NOTHING
+            ON CONFLICT (lab_id, lab_product_id, fee_schedule_name) DO UPDATE SET
+                incisive_product_id = EXCLUDED.incisive_product_id,
+                revenue_share = EXCLUDED.revenue_share,
+                commitment_eligible = EXCLUDED.commitment_eligible
         `;
 
         const values = [
