@@ -128,26 +128,21 @@ class MagicTouchExtractor {
             };
 
             // Flatten products - one row per product
+            // Skip cases with no products
             const products = c.caseProducts || [];
 
             if (products.length === 0) {
+                continue;  // Skip cases without products
+            }
+
+            for (const p of products) {
                 rows.push({
                     ...baseRow,
-                    productid: '',
-                    productdescription: '',
-                    quantity: '',
-                    productprice: ''
+                    productid: p.productID || '',
+                    productdescription: p.invoiceDescription || '',
+                    quantity: p.quantity || 0,
+                    productprice: p.unitPrice || 0
                 });
-            } else {
-                for (const p of products) {
-                    rows.push({
-                        ...baseRow,
-                        productid: p.productID || '',
-                        productdescription: p.invoiceDescription || '',
-                        quantity: p.quantity || 0,
-                        productprice: p.unitPrice || 0
-                    });
-                }
             }
         }
 
