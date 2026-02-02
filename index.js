@@ -21,6 +21,7 @@
  *
  * Available extractors:
  *   - dental-groups (Salesforce -> S3)
+ *   - dental-practices (Salesforce -> S3)
  *
  * To add a new pipeline:
  *   1. Copy src/pipelines/_template to src/pipelines/<your-pipeline>
@@ -84,7 +85,8 @@ module.exports = {
  * When a pipeline runs, its extractor (if any) runs first
  */
 const PIPELINE_EXTRACTORS = {
-    'dental-groups': 'dental-groups'  // SF dental-groups -> S3 -> RDS
+    'dental-groups': 'dental-groups',      // SF dental-groups -> S3 -> RDS
+    'dental-practices': 'dental-practices' // SF dental-practices -> S3 -> RDS
 };
 
 /**

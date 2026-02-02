@@ -13,12 +13,14 @@
 
 const SalesforceClient = require('./SalesforceClient');
 const dentalGroupsQuery = require('./queries/dental-groups');
+const dentalPracticesQuery = require('./queries/dental-practices');
 const logger = require('../../utils/logger');
 const { S3Handler } = require('../../core');
 
 // Query registry - maps extractor names to query configurations
 const QUERIES = {
-    'dental-groups': dentalGroupsQuery
+    'dental-groups': dentalGroupsQuery,
+    'dental-practices': dentalPracticesQuery
 };
 
 class SalesforceExtractor {
