@@ -34,7 +34,7 @@ class OrdersPipeline extends BasePipeline {
     }
 
     get requiredFields() {
-        return ['submissiondate', 'casedate', 'caseid', 'productid', 'quantity', 'customerid'];
+        return ['casedate', 'caseid', 'productid', 'quantity', 'customerid'];
     }
 
     get envKey() {
