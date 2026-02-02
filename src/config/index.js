@@ -67,8 +67,8 @@ module.exports = {
      */
     magictouch: {
         baseUrl: process.env.MAGICTOUCH_BASE_URL,
-        userID: process.env.MAGICTOUCH_USER_ID,
-        password: process.env.MAGICTOUCH_PASSWORD,
+        userID: process.env.MAGICTOUCH_USER_ID || 'crmapi',
+        password: process.env.MAGICTOUCH_PASSWORD || '0343FDB8F73F4107884DC6CB8C3AE95C',
         exportMode: getOptionalEnv('EXPORT_MODE', 'INC') // 'INC' (last 7 days) or 'FULL'
     },
 
