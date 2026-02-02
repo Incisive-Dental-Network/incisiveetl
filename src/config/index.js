@@ -62,6 +62,17 @@ module.exports = {
     },
 
     /**
+     * MagicTouch Configuration
+     * Used for extracting orders from MagicTouch API
+     */
+    magictouch: {
+        baseUrl: process.env.MAGICTOUCH_BASE_URL,
+        userID: process.env.MAGICTOUCH_USER_ID,
+        password: process.env.MAGICTOUCH_PASSWORD,
+        exportMode: getOptionalEnv('EXPORT_MODE', 'INC') // 'INC' (last 7 days) or 'FULL'
+    },
+
+    /**
      * Database Configuration
      */
     db: {

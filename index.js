@@ -22,6 +22,7 @@
  * Available extractors:
  *   - dental-groups (Salesforce -> S3)
  *   - dental-practices (Salesforce -> S3)
+ *   - magictouch-orders (MagicTouch -> S3)
  *
  * To add a new pipeline:
  *   1. Copy src/pipelines/_template to src/pipelines/<your-pipeline>
@@ -34,7 +35,7 @@ const config = require('./src/config');
 const { S3Handler, DatabaseConnection } = require('./src/core');
 const Orchestrator = require('./src/etl/Orchestrator');
 const pipelines = require('./src/pipelines');
-const { SalesforceExtractor } = require('./src/extractors');
+const { SalesforceExtractor, MagicTouchExtractor } = require('./src/extractors');
 const logger = require('./src/utils/logger');
 
 // ==================== Initialize Services ====================
@@ -120,20 +121,27 @@ if (require.main === module) {
         try {
             // ==================== EXTRACT COMMAND ====================
             if (command === 'extract') {
+                // Get all available extractors
+                const sfExtractors = SalesforceExtractor.getAvailableExtractors();
+                const mtExtractors = MagicTouchExtractor.getAvailableExtractors().map(e => `magictouch-${e}`);
+                const allExtractors = [...sfExtractors, ...mtExtractors];
+
                 // List available extractors
                 if (subCommand === 'list' || !subCommand) {
-                    const extractors = SalesforceExtractor.getAvailableExtractors();
                     console.log('\nAvailable extractors:');
-                    extractors.forEach(name => console.log(`  - ${name}`));
+                    console.log('  Salesforce:');
+                    sfExtractors.forEach(name => console.log(`    - ${name}`));
+                    console.log('  MagicTouch:');
+                    mtExtractors.forEach(name => console.log(`    - ${name}`));
                     console.log('\nUsage: node index.js extract <extractor-name>');
                     console.log('       node index.js extract list\n');
                     await shutdown();
                     return;
                 }
 
-                // Run specific extractor
+                // Run Salesforce extractor
                 if (SalesforceExtractor.hasExtractor(subCommand)) {
-                    logger.info(`Running extractor: ${subCommand}`);
+                    logger.info(`Running Salesforce extractor: ${subCommand}`);
                     const extractor = new SalesforceExtractor(config.salesforce, s3Handler);
                     const result = await extractor.extract(subCommand);
                     logger.info(`Extractor ${subCommand} completed`, {
@@ -147,11 +155,31 @@ if (require.main === module) {
                     return;
                 }
 
+                // Run MagicTouch extractor
+                if (subCommand.startsWith('magictouch-')) {
+                    const mtExtractorName = subCommand.replace('magictouch-', '');
+                    if (MagicTouchExtractor.hasExtractor(mtExtractorName)) {
+                        logger.info(`Running MagicTouch extractor: ${mtExtractorName}`);
+                        const extractor = new MagicTouchExtractor(config.magictouch, s3Handler);
+                        const result = await extractor.extract();
+                        logger.info(`Extractor ${subCommand} completed`, {
+                            caseCount: result.caseCount,
+                            recordCount: result.recordCount,
+                            s3Key: result.s3Key
+                        });
+                        console.log(`\nExtraction complete!`);
+                        console.log(`  Cases: ${result.caseCount}`);
+                        console.log(`  Rows: ${result.recordCount}`);
+                        console.log(`  File: s3://${result.bucket}/${result.s3Key}\n`);
+                        await shutdown();
+                        return;
+                    }
+                }
+
                 // Unknown extractor
                 console.error(`\nUnknown extractor: ${subCommand}`);
-                const extractors = SalesforceExtractor.getAvailableExtractors();
                 console.log('\nAvailable extractors:');
-                extractors.forEach(name => console.log(`  - ${name}`));
+                allExtractors.forEach(name => console.log(`  - ${name}`));
                 console.log('\nUsage: node index.js extract <extractor-name>\n');
                 process.exit(1);
             }
