@@ -30,6 +30,18 @@ orders-etl-service/
     ├── etl/
     │   └── Orchestrator.js           # Central coordinator for pipeline execution
     │
+    ├── extractors/                   # External API data extractors
+    │   ├── index.js                  # Extractor registry
+    │   ├── salesforce/               # Salesforce extractor
+    │   │   ├── index.js              # Main Salesforce extractor class
+    │   │   ├── SalesforceClient.js   # Salesforce API client (JWT auth)
+    │   │   └── queries/              # SOQL query configurations
+    │   │       ├── dental-groups.js  # Dental groups query + mapping
+    │   │       └── dental-practices.js # Dental practices query + mapping
+    │   └── magictouch/               # MagicTouch extractor
+    │       ├── index.js              # Main MagicTouch extractor class
+    │       └── MagicTouchClient.js   # MagicTouch API client
+    │
     ├── pipelines/
     │   ├── index.js                  # Auto-discovery pipeline registry
     │   ├── _template/                # Template for creating new pipelines
@@ -118,6 +130,87 @@ s3://<bucket>/<SOURCEPATH>/
 
 ---
 
+## 2.5 External API Extractors
+
+In addition to processing CSV files from S3, the service includes **extractors** that pull data directly from external APIs and upload CSVs to S3 for subsequent pipeline processing.
+
+### Extractor Architecture
+
+```
+External API → Extractor → CSV → S3 (source/) → Pipeline → PostgreSQL
+```
+
+Extractors fetch data from external systems, convert to CSV format matching pipeline expectations, and upload to the appropriate S3 source folder. The standard ETL pipelines then process these CSVs.
+
+### Salesforce Extractor (`src/extractors/salesforce/`)
+
+**Purpose:** Extract dental groups and practices from Salesforce CRM
+
+**Authentication:** JWT Bearer flow using RSA private key
+
+**Available Extractors:**
+- `dental-groups` — Fetches Account records with Corporate_ID__c
+- `dental-practices` — Fetches Account records that belong to a parent group
+
+**Data Flow:**
+1. Authenticate to Salesforce using JWT
+2. Execute SOQL query
+3. Map Salesforce records to CSV format (matching pipeline expectations)
+4. Upload CSV to S3 source folder
+
+**Salesforce Configuration (Environment Variables):**
+- `SF_LOGIN_URL` — Salesforce login URL (e.g., `https://login.salesforce.com`)
+- `SF_CLIENT_ID` — Connected App consumer key
+- `SF_USERNAME` — Salesforce username
+- `SF_PRIVATE_KEY` — RSA private key content (with `\n` for newlines)
+- `SF_PRIVATE_KEY_PATH` — Alternative: path to private key file
+- `SF_API_VERSION` — API version (default: `59.0`)
+
+**Query Configurations:**
+- See `src/extractors/salesforce/queries/dental-groups.js`
+- See `src/extractors/salesforce/queries/dental-practices.js`
+
+### MagicTouch Extractor (`src/extractors/magictouch/`)
+
+**Purpose:** Extract dental lab orders from MagicTouch lab management system
+
+**Authentication:** Token-based (username/password)
+
+**Available Extractors:**
+- `orders` — Fetches cases and flattens by product line
+
+**Data Flow:**
+1. Authenticate to MagicTouch API
+2. Fetch cases (filtered by customer type "Incisive")
+3. Fetch customers for phone number lookup
+4. Flatten cases by product (one row per product)
+5. Upload CSV to S3 orders source folder
+
+**Export Modes:**
+- `INC` (Incremental) — Fetch cases modified in last 7 days
+- `FULL` — Fetch all cases
+
+**MagicTouch Configuration (Environment Variables):**
+- `MAGICTOUCH_BASE_URL` — API base URL
+- `MAGICTOUCH_USER_ID` — API user ID
+- `MAGICTOUCH_PASSWORD` — API password
+- `EXPORT_MODE` — `INC` or `FULL` (default: `INC`)
+
+**Output CSV Columns:**
+- Maps to orders pipeline expected columns: `labid`, `submissiondate`, `shippingdate`, `casedate`, `caseid`, `productid`, `productdescription`, `quantity`, `productprice`, `patientname`, `customerid`, `customername`, `address`, `phonenumber`, `casestatus`, etc.
+- `labid` is hardcoded to `2` for MagicTouch orders
+
+### Extractor Usage
+
+Extractors are not exposed via CLI. Use programmatically:
+```javascript
+const { SalesforceExtractor, MagicTouchExtractor } = require('./src/extractors');
+await sfExtractor.extract('dental-groups');  // Salesforce
+await mtExtractor.extract();                  // MagicTouch
+```
+
+---
+
 ## 3. Transformations
 
 ### Common Processing Flow (BasePipeline)
@@ -132,61 +225,18 @@ All pipelines inherit this sequence from `src/core/BasePipeline.js`:
 - **Insert** — Each row inserted with PostgreSQL `SAVEPOINT` for individual error recovery
 - **Post-process** — Optional hook (only orders pipeline uses this to call stored procedure)
 
-### Pipeline-Specific Transformations
+### Pipeline Summary
 
-**orders** (`src/pipelines/orders/index.js`)
-- Target table: `orders_stage`
-- Truncates staging table before each run (full refresh)
-- Required fields: `submissiondate`, `casedate`, `caseid`, `productid`, `quantity`, `customerid`
-- Type conversions: `quantity` → parseInt, `caseid` → parseInt
-- Generates MD5 `row_hash` for deduplication via `generateRowHash()`
-- Records `source_file_key` for data lineage
-- Post-process: calls `CALL merge_orders_stage()` stored procedure
+- **orders** → `orders_stage` — Required: submissiondate, casedate, caseid, productid, quantity, customerid — Truncate + merge
+- **product-catalog** → `incisive_product_catalog` — Required: incisive_id, incisive_name, category
+- **dental-practices** → `dental_practices` — Required: practice_id, dental_group_id
+- **dental-groups** → `dental_groups` — Required: dental_group_id, name
+- **lab-product-mapping** → `lab_product_mapping` — Required: lab_id, lab_product_id, incisive_product_id
+- **lab-practice-mapping** → `lab_practice_mapping` — Required: lab_id, practice_id, lab_practice_id
+- **product-lab-markup** → `product_lab_markup` — Required: lab_id, lab_product_id
+- **product-lab-rev-share** → `product_lab_rev_share` — Required: lab_id, lab_product_id, fee_schedule_name
 
-**product-catalog** (`src/pipelines/product-catalog/index.js`)
-- Target table: `incisive_product_catalog`
-- Required fields: `incisive_id`, `incisive_name`, `category`
-- Key mappings: `incisiveid` → `incisive_id` (Number), `incisivename` → `incisive_name`, `subcategory` → `sub_category`
-- Conflict handling: `ON CONFLICT (incisive_id) DO NOTHING`
-
-**dental-practices** (`src/pipelines/dental-practices/index.js`)
-- Target table: `dental_practices`
-- Required fields: `practice_id`, `dental_group_id`
-- Key mappings: `practiceid` → `practice_id` (Number), `dentalgroupid` → `dental_group_id` (Number)
-- Conflict handling: `ON CONFLICT (practice_id) DO NOTHING`
-
-**dental-groups** (`src/pipelines/dental-groups/index.js`)
-- Target table: `dental_groups`
-- Required fields: `dental_group_id`, `name`
-- Key mappings: `dentalgroupid` → `dental_group_id` (Number)
-- Boolean parsing: `centralizedbilling` → `centralized_billing` (`'true'`/`'1'` = true)
-- Conflict handling: `ON CONFLICT (dental_group_id) DO NOTHING`
-
-**lab-product-mapping** (`src/pipelines/lab-product-mapping/index.js`)
-- Target table: `lab_product_mapping`
-- Required fields: `lab_id`, `lab_product_id`, `incisive_product_id`
-- Key mappings: `labid` → `lab_id` (Number), `incisiveproductid` → `incisive_product_id` (Number)
-- Conflict handling: `ON CONFLICT (lab_id, lab_product_id) DO NOTHING`
-
-**lab-practice-mapping** (`src/pipelines/lab-practice-mapping/index.js`)
-- Target table: `lab_practice_mapping`
-- Required fields: `lab_id`, `practice_id`, `lab_practice_id`
-- Key mappings: `labid` → `lab_id` (Number), `practiceid` → `practice_id` (Number)
-- Conflict handling: `ON CONFLICT (lab_id, lab_practice_id) DO NOTHING`
-
-**product-lab-markup** (`src/pipelines/product-lab-markup/index.js`)
-- Target table: `product_lab_markup`
-- Required fields: `lab_id`, `lab_product_id`
-- Pricing fields: `cost`, `standardprice`, `nfprice` → parseFloat
-- Boolean parsing: `commitmenteligible` → `commitment_eligible` (`'true'`/`'1'`/`'yes'` = true)
-- Conflict handling: `ON CONFLICT (lab_id, lab_product_id) DO NOTHING`
-
-**product-lab-rev-share** (`src/pipelines/product-lab-rev-share/index.js`)
-- Target table: `product_lab_rev_share`
-- Required fields: `lab_id`, `lab_product_id`, `fee_schedule_name`
-- Key mappings: `revenueshare` → `revenue_share` (parseFloat)
-- Boolean parsing: `commitmenteligible` → `commitment_eligible`
-- Conflict handling: `ON CONFLICT (lab_id, lab_product_id, fee_schedule_name) DO NOTHING`
+**Note:** All pipelines except `orders` use `ON CONFLICT DO NOTHING`. The `orders` pipeline truncates staging, inserts all rows, then calls `merge_orders_stage()` stored procedure.
 
 ### Validation and Cleansing Rules
 
@@ -212,32 +262,10 @@ All pipelines inherit this sequence from `src/core/BasePipeline.js`:
 - Connect timeout: 2 seconds (configurable via `DB_CONNECT_TIMEOUT`)
 - SSL: Optional (configurable via `DB_SSL`)
 
-### Target Tables and Load Strategies
+### Load Strategies
 
-- **orders_stage** (orders pipeline)
-  - Load strategy: Truncate-and-load (full refresh each run)
-  - Post-load: `CALL merge_orders_stage()` merges into final orders table
-
-- **incisive_product_catalog** (product-catalog pipeline)
-  - Load strategy: Insert, skip on conflict (upsert)
-
-- **dental_practices** (dental-practices pipeline)
-  - Load strategy: Insert, skip on conflict (upsert)
-
-- **dental_groups** (dental-groups pipeline)
-  - Load strategy: Insert, skip on conflict (upsert)
-
-- **lab_product_mapping** (lab-product-mapping pipeline)
-  - Load strategy: Insert, skip on conflict (upsert)
-
-- **lab_practice_mapping** (lab-practice-mapping pipeline)
-  - Load strategy: Insert, skip on conflict (upsert)
-
-- **product_lab_markup** (product-lab-markup pipeline)
-  - Load strategy: Insert, skip on conflict (upsert)
-
-- **product_lab_rev_share** (product-lab-rev-share pipeline)
-  - Load strategy: Insert, skip on conflict (upsert)
+- **orders:** Truncate `orders_stage` → insert all → call `merge_orders_stage()`
+- **All others:** Insert with `ON CONFLICT DO NOTHING` (upsert behavior)
 
 ### Stored Procedures
 
@@ -265,34 +293,17 @@ All pipelines inherit this sequence from `src/core/BasePipeline.js`:
 ### CLI Commands
 
 ```bash
-# Process all pipelines (default)
-node index.js
-
-# Process all pipelines (explicit)
-node index.js all
-
-# Process a single pipeline
-node index.js orders
-node index.js dental-groups
-node index.js product-catalog
-
-# List available pipelines
-node index.js list
+node index.js              # Process all pipelines
+node index.js <name>       # Process specific pipeline (e.g., orders, dental-groups)
+node index.js list         # List available pipelines
 ```
 
 ### Execution Characteristics
 
-- Pipelines run sequentially (one after another, not parallel)
-- Files within a pipeline are processed sequentially
-- Each file is processed inside a single PostgreSQL transaction
-- Process exits with code 0 (success) or 1 (fatal error)
-
-### Manual vs Automated Execution
-
-- **Manual:** Run `node index.js` from command line
-- **Automated:** No automation exists in this repo; must be configured externally
-  - Options: cron job, AWS CloudWatch Events, ECS scheduled tasks, Lambda
-  - Previous team's scheduling mechanism is unknown
+- Pipelines and files processed sequentially
+- Each file in single PostgreSQL transaction
+- Exit code: 0 (success) or 1 (fatal error)
+- **No built-in automation** — external scheduling required (cron, CloudWatch, etc.)
 
 ---
 
@@ -332,12 +343,30 @@ node index.js list
 - `LOG_TO_CONSOLE` — Enable console output (default: `true`)
 - `BATCH_SIZE` — Rows per processing batch (default: `100`)
 
+**Salesforce Extractor Configuration**
+- `SF_LOGIN_URL` — Salesforce login URL (e.g., `https://login.salesforce.com`)
+- `SF_CLIENT_ID` — Connected App consumer key
+- `SF_USERNAME` — Salesforce username for JWT auth
+- `SF_PRIVATE_KEY` — RSA private key content (use `\n` for newlines in env var)
+- `SF_PRIVATE_KEY_PATH` — Alternative: file path to private key
+- `SF_API_VERSION` — Salesforce API version (default: `59.0`)
+
+**MagicTouch Extractor Configuration**
+- `MAGICTOUCH_BASE_URL` — MagicTouch API base URL
+- `MAGICTOUCH_USER_ID` — API user ID
+- `MAGICTOUCH_PASSWORD` — API password
+- `EXPORT_MODE` — `INC` (last 7 days) or `FULL` (all records)
+
 ### Credentials Handling
 
 - **Database credentials:** Plaintext in `.env` file (file is in `.gitignore`)
 - **AWS credentials:** Either plaintext in `.env` OR via IAM role/instance profile
   - S3Handler checks for explicit credentials first
   - Falls back to AWS default credential chain if not provided
+- **Salesforce credentials:** JWT authentication using RSA private key
+  - Private key can be provided as content (`SF_PRIVATE_KEY`) or file path (`SF_PRIVATE_KEY_PATH`)
+  - Requires Connected App configuration in Salesforce
+- **MagicTouch credentials:** Username/password in `.env` file
 - **No secrets manager integration** — Must be handled at infrastructure level
 
 ---
@@ -352,43 +381,19 @@ node index.js list
 - No deployment scripts
 - Deployment appears to be manual
 
-### How to Set Up a New Environment
+### Setup Steps
 
-1. **Clone the repository**
-   ```bash
-   git clone <repo-url>
-   cd orders-etl-service
-   npm install
-   ```
+1. Clone repo, run `npm install`
+2. Copy `.env.example` to `.env`, configure values
+3. Create PostgreSQL `etl` schema and target tables (DDL not in repo)
+4. Deploy `merge_orders_stage()` stored procedure
+5. Ensure S3 bucket exists with proper IAM permissions
+6. Run: `npm start` (production) or `npm run dev` (with nodemon)
 
-2. **Create environment file**
-   ```bash
-   cp .env.example .env
-   # Edit .env with environment-specific values
-   ```
+### DEV vs PROD
 
-3. **Prepare PostgreSQL database**
-   - Create the `etl` schema
-   - Create all target tables (DDL not in repo)
-   - Deploy the `merge_orders_stage()` stored procedure
-
-4. **Prepare S3 bucket**
-   - Ensure bucket exists with configured name
-   - Configure IAM permissions for the credentials being used
-   - Create source folders for each pipeline
-
-5. **Run the service**
-   ```bash
-   npm start          # Production run
-   npm run dev        # Development with auto-reload (nodemon)
-   ```
-
-### DEV vs PROD Differentiation
-
-- Controlled entirely by `.env` file contents
-- Different S3 prefixes (e.g., `dev_orders` vs `prod_orders`)
-- Different database hosts/credentials
-- No code-level environment checks (`NODE_ENV` not used)
+- Controlled by `.env` (different S3 prefixes, DB hosts, credentials)
+- No `NODE_ENV` checks in code
 
 ---
 
@@ -411,38 +416,18 @@ node index.js list
 
 ### Error Reporting to S3
 
-For every processed file, two output CSVs are uploaded:
-
-**Processed file** (`processed/{timestamp}_{filename}.csv`)
-- Contains only valid/successfully-inserted rows
-- Uploaded to the pipeline's `processed/` subfolder
-
-**Log file** (`logs/{baseName}_log_{timestamp}.csv`)
-- Contains ALL rows (valid + invalid)
-- Includes three appended columns:
-  - `etl_status`: `'success'` or `'error'`
-  - `etl_reason`: Error message (empty for successful rows)
-  - `missingFields`: Comma-separated list of missing required fields
+- `processed/{timestamp}_{filename}.csv` — Valid rows only
+- `logs/{baseName}_log_{timestamp}.csv` — All rows with `etl_status`, `etl_reason`, `missingFields` columns
 
 ### Local Logging
 
-- **Logger:** Winston with JSON-formatted output
-- **Global logs:**
-  - `logs/combined.log` — All log levels
-  - `logs/error.log` — Errors only
-- **Pipeline-specific logs:**
-  - `logs/<pipeline-name>/combined.log`
-  - `logs/<pipeline-name>/error.log`
-- **Console output:** Enabled when `LOG_TO_CONSOLE=true`
+- Winston JSON logs: `logs/combined.log`, `logs/error.log`
+- Pipeline-specific: `logs/<pipeline>/combined.log`, `logs/<pipeline>/error.log`
+- Console output enabled when `LOG_TO_CONSOLE=true`
 
 ### Alerts
 
-- **No alerting system exists**
-- No integration with PagerDuty, Slack, email, or CloudWatch Alarms
-- Monitoring must be built externally
-  - Check log files
-  - Monitor S3 processed/logs folders
-  - Wrap process in scheduler that reports exit codes
+- **No alerting system** — Must be built externally (monitor logs, S3 folders, exit codes)
 
 ---
 
@@ -473,76 +458,28 @@ node index.js product-catalog
 
 ### How to Fix Failed Pipelines
 
-**Scenario: Rows failed validation (missing required fields)**
-1. Check S3 logs folder for `*_log_*.csv` file
-2. Filter rows where `etl_status = 'error'`
-3. Review `etl_reason` and `missingFields` columns
-4. Fix source data upstream
-5. Re-drop corrected file into S3 source folder
-6. Re-run the pipeline
+**Validation errors:** Check S3 `logs/*_log_*.csv`, filter `etl_status = 'error'`, review `etl_reason`, fix source data, re-run.
 
-**Scenario: Database insert failures (constraint violations)**
-1. Check `logs/<pipeline-name>/error.log`
-2. Check S3 log CSV for `etl_status = 'error'` rows
-3. Review Postgres error message in `etl_reason`
-4. Investigate schema mismatch or data issues
-5. Fix and re-run
+**Database errors:** Check `logs/<pipeline>/error.log`, review constraint violations in `etl_reason`, fix data/schema, re-run.
 
-**Scenario: Transaction rolled back (postProcess failure)**
-- Applies only to orders pipeline (`merge_orders_stage()`)
-- Entire file's inserts are rolled back if procedure fails
-1. Check `logs/orders/error.log` for procedure error
-2. Connect to PostgreSQL and inspect the stored procedure
-3. Fix procedure or data issue
-4. Re-run orders pipeline
+**Stored procedure failure (orders):** Check `logs/orders/error.log`, inspect `merge_orders_stage()` in PostgreSQL, fix and re-run.
 
-**Scenario: S3 connectivity errors**
-1. Verify `S3_BUCKET` and source path prefix in `.env`
-2. Verify AWS credentials are valid
-3. Test AWS CLI access: `aws s3 ls s3://<bucket>/<prefix>/`
-4. Check IAM permissions
-
-**Scenario: Database connectivity issues**
-1. Verify `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
-2. Test connection: `psql -h <host> -U <user> -d <dbname>`
-3. If using SSL, verify `DB_SSL=true` is set
-4. Check for pool exhaustion (max 10 connections, 2s timeout)
+**Connectivity issues:** Verify `.env` settings (DB_*, S3_BUCKET, AWS_*), test connections manually.
 
 ### How to Add a New Pipeline
 
-1. Copy template folder:
-   ```bash
-   cp -r src/pipelines/_template src/pipelines/<new-name>
-   ```
-
-2. Edit `src/pipelines/<new-name>/index.js`:
-   - Implement `get name()` — pipeline identifier
-   - Implement `get tableName()` — target database table
-   - Implement `get requiredFields()` — array of mandatory columns
-   - Implement `get envKey()` — environment variable name for S3 path
-   - Implement `mapRow(normalizedRow)` — CSV to DB column mapping
-   - Implement `buildInsertQuery(mappedRow)` — SQL insert statement
-
-3. Add environment variable to `.env`:
-   ```
-   NEW_PIPELINE_SOURCEPATH=dev_new_pipeline
-   ```
-
+1. Copy `src/pipelines/_template/` to `src/pipelines/<new-name>/`
+2. Implement required methods: `name`, `tableName`, `requiredFields`, `envKey`, `mapRow()`, `buildInsertQuery()`
+3. Add env var to `.env` (e.g., `NEW_PIPELINE_SOURCEPATH=dev_new_pipeline`)
 4. Create target table in PostgreSQL
-
-5. Restart the service — pipeline auto-registers via filesystem discovery
+5. Restart — auto-registers via filesystem discovery
 
 ### Key Operational Caveats
 
-- **Source file deletion is disabled** — Files remain in S3 source folder after processing (`Orchestrator.js:267`). Without manual cleanup, every run re-processes all files.
-
-- **Orders pipeline idempotency** — Truncates staging table on every run, then merges. If merge fails mid-way and process re-runs, staging will be truncated and reloaded. Merge procedure must handle this.
-
-- **No test suite** — No unit or integration tests exist. Validate changes manually in dev environment.
-
-- **No database migrations** — Schema changes must be applied manually. No migration framework.
-
-- **`merge_orders_stage()` is external** — Stored procedure not in this repo. Behavior must be understood by inspecting the database.
+- **Source file deletion disabled** — Files remain after processing (`Orchestrator.js:267`); manual cleanup needed
+- **No test suite** — Validate changes manually in dev environment
+- **No database migrations** — Schema changes applied manually
+- **`merge_orders_stage()` external** — Stored procedure not in repo; inspect database directly
 
 ---
 
@@ -550,8 +487,10 @@ node index.js product-catalog
 
 **Production Dependencies**
 - `@aws-sdk/client-s3` (^3.450.0) — AWS S3 API client
+- `axios` (^1.6.0) — HTTP client for Salesforce API
 - `csv-parser` (^3.0.0) — Streaming CSV parser
 - `dotenv` (^16.3.1) — Environment variable loader
+- `jsonwebtoken` (^9.0.0) — JWT signing for Salesforce auth
 - `pg` (^8.11.3) — PostgreSQL client and connection pool
 - `winston` (^3.11.0) — Structured logging
 
